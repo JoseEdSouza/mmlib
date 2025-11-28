@@ -1,4 +1,5 @@
-from .matcher import BaseMatcher, graphhopper_matcher
+from .matcher import BaseMatcher
+from .graphhopper.matcher import graphhopper_matcher
 from .gpx import to_gpx
 
 __all__ = [

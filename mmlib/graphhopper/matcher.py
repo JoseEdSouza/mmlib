@@ -5,37 +5,52 @@ import polyline
 import requests
 
 from mmlib.gpx import GPSPoint, to_gpx
-from mmlib.matcher import Coordinate, MatchResult
-from mmlib.matcher import BaseMatcher
+from mmlib.matcher import BaseMatcher, Coordinate, MatchResult
 
 
 class Matcher(BaseMatcher):
     _base_url: str
     _gps_accuracy: int
+    _profile: str
+    _locale: str
 
-    def __init__(self, base_url: str, gps_accuracy: int | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        gps_accuracy: int = 50,
+        profile: str = "car",
+        locale: str = "pt_BR",
+    ) -> None:
         self._base_url = base_url
+        self._gps_accuracy = gps_accuracy
+        self._profile = profile
+        self._locale = locale
 
-        self._gps_accuracy = 50
-        if gps_accuracy is not None:
-            self._gps_accuracy = gps_accuracy
-
-    def map_match(self, points: list[GPSPoint]) -> MatchResult:
+    def match(self, points: list[GPSPoint]) -> MatchResult:
         gpx_points = to_gpx(points)
-        response = self.__request(gpx_points)
+        response = self._request(gpx_points)
         res_points = polyline.decode(response["points"])
         edge_ids = [str(edge) for (_, __, edge) in response["edge_ids"]]
-        return MatchResult.__from_internal(
+        return MatchResult(
             matcher_name="GraphHopper",
             measurement_points=[
                 Coordinate(latitude=lat, longitude=lon) for lat, lon, _ in points
             ],
-            matched_points=[Coordinate(latitude=lat, longitude=lon) for lat, lon in res_points],
+            matched_points=[
+                Coordinate(latitude=lat, longitude=lon) for lat, lon in res_points
+            ],
             edge_ids=edge_ids,
         )
 
-    def __request(self, gpx_points: str) -> dict[str, Any]:
-        url = f"{self._base_url}/match?profile=car&gps_accuracy={self._gps_accuracy}&type=json&locale=pt_BR&details=osm_way_id"
+    def _request(self, gpx_points: str) -> dict[str, Any]:
+        url = (
+            f"{self._base_url}/match"
+            f"?profile={self._profile}"
+            f"&gps_accuracy={self._gps_accuracy}"
+            f"&type=json"
+            f"&locale={self._locale}"
+            f"&details=osm_way_id"
+        )
         headers = {
             "Content-Type": "application/gpx+xml",
         }

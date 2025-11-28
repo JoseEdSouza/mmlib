@@ -1,147 +1,127 @@
 import math
+from typing import Any, Literal
+
 import networkx as nx
+import osmnx as ox
 import pandas as pd
 import plotly.graph_objects as go
 
-
-type lat = float
-type lon = float
-
-
-def plot_trajectories(
-    original: list[tuple[lat, lon]],
-    calculated: list[tuple[lat, lon]],
-    title: str = "Tracks",
-    original_label: str = "Original",
-    calculated_label: str = "Calculated",
-    show_original_line: bool = True,
-    show_buttons: bool = True,
-    center_lat: float | None = None,
-    center_lon: float | None = None,
-    zoom: float = 14,
-) -> None:
-    flat_original = [
-        (lat, lon, original_label, i) for i, (lat, lon) in enumerate(original)
-    ]
-    flat_calculated = [
-        (lat, lon, calculated_label, i) for i, (lat, lon) in enumerate(calculated)
-    ]
-
-    df = pd.DataFrame(
-        flat_original + flat_calculated,
-        columns=["lat", "lon", "type", "row_num"],
-    )
-
-    fig = go.Figure()
-    visible_flags = []
-
-    for type_ in [original_label, calculated_label]:
-        subset = df[df["type"] == type_].sort_values("row_num")
-
-        # Pontos
-        fig.add_trace(
-            go.Scattermap(
-                lat=subset["lat"],
-                lon=subset["lon"],
-                mode="markers",
-                marker=dict(size=10),
-                name=f"{type_} - pontos",
-                legendgroup=type_,
-                visible=True,
-            )
-        )
-        visible_flags.append(True)
-
-        # Linhas
-        show_line = True
-        if type_ == original_label and not show_original_line:
-            show_line = False
-        fig.add_trace(
-            go.Scattermap(
-                lat=subset["lat"],
-                lon=subset["lon"],
-                mode="lines",
-                line=dict(width=2),
-                name=f"{type_} - linha",
-                legendgroup=type_,
-                visible=show_line,
-            )
-        )
-        visible_flags.append(show_line)
-
-    # Definir centro do mapa
-    if center_lat is None or center_lon is None:
-        # Usar centro calculado a partir dos dados
-        map_center = dict(lat=df["lat"].mean(), lon=df["lon"].mean())
-    else:
-        # Usar coordenadas fornecidas
-        map_center = dict(lat=center_lat, lon=center_lon)
-
-    if show_buttons:
-        fig.update_layout(
-            updatemenus=[
-                dict(
-                    type="buttons",
-                    direction="right",
-                    showactive=True,
-                    x=0.5,
-                    xanchor="center",
-                    y=1,
-                    yanchor="top",
-                    buttons=[
-                        dict(
-                            label="Mostrar Nenhuma",
-                            method="update",
-                            args=[
-                                {"visible": [False, False, False, False]},
-                                {"mapbox": dict(center=map_center, zoom=zoom)},
-                            ],
-                        ),
-                        dict(
-                            label="Mostrar Ambas",
-                            method="update",
-                            args=[
-                                {"visible": [True, show_original_line, True, True]},
-                                {"mapbox": dict(center=map_center, zoom=zoom)},
-                            ],
-                        ),
-                        dict(
-                            label=f"Apenas {original_label}",
-                            method="update",
-                            args=[
-                                {"visible": [True, show_original_line, False, False]},
-                                {"mapbox": dict(center=map_center, zoom=zoom)},
-                            ],
-                        ),
-                        dict(
-                            label=f"Apenas {calculated_label}",
-                            method="update",
-                            args=[
-                                {"visible": [False, False, True, True]},
-                                {"mapbox": dict(center=map_center, zoom=zoom)},
-                            ],
-                        ),
-                    ],
-                )
-            ]
-        )
-
-    fig.update_layout(
-        mapbox_style="open-street-map",
-        mapbox=dict(center=map_center, zoom=zoom),
-        margin=dict(l=0, r=0, t=80, b=0),
-        height=700,
-        title=title,
-    )
-
-    fig.show()
+# --- Types ---
+type Lat = float
+type Lon = float
+type Point = tuple[Lat, Lon]
+type EdgeID = str
+type TraceType = Literal["markers", "lines"]
 
 
-def __distance(a, b):
+# --- Helper Functions ---
+def _distance(a: Point, b: Point) -> float:
+    """Calculate Euclidean distance between two points."""
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
-def __map_osmid_to_edges(graph: nx.Graph) -> dict[str, list[tuple[int, int]]]:
+def _create_scatter_trace(
+    df: pd.DataFrame,
+    trace_type: str,
+    mode: TraceType,
+    color: str | None = None,
+    size: int | None = None,
+    width: int | None = None,
+    visible: bool = True,
+) -> go.Scattermap:
+    """Create a Scattermap trace for points or lines."""
+    marker_dict = dict(size=size) if size else None
+    line_dict = dict(width=width) if width else None
+
+    return go.Scattermap(
+        lat=df["lat"],
+        lon=df["lon"],
+        mode=mode,
+        marker=marker_dict,
+        line=line_dict,
+        name=f"{trace_type} - {'pontos' if mode == 'markers' else 'linha'}",
+        legendgroup=trace_type,
+        visible=visible,
+    )
+
+
+def _create_layout(
+    title: str,
+    map_center: dict[str, float],
+    zoom: float,
+    updatemenus: list[dict[str, Any]] | None = None,
+    height: int = 700,
+) -> go.Layout:
+    """Create the layout for the figure."""
+    return go.Layout(
+        mapbox_style="open-street-map",
+        mapbox=dict(center=map_center, zoom=zoom),
+        margin=dict(l=0, r=0, t=80, b=0),
+        height=height,
+        title=title,
+        updatemenus=updatemenus,
+    )
+
+
+def _create_buttons(
+    original_label: str,
+    calculated_label: str,
+    show_original_line: bool,
+    map_center: dict[str, float],
+    zoom: float,
+) -> list[dict[str, Any]]:
+    """Create the update buttons for the map."""
+    return [
+        dict(
+            type="buttons",
+            direction="right",
+            showactive=True,
+            x=0.5,
+            xanchor="center",
+            y=1,
+            yanchor="top",
+            buttons=[
+                dict(
+                    label="Mostrar Nenhuma",
+                    method="update",
+                    args=[
+                        {"visible": [False, False, False, False]},
+                        {"mapbox": dict(center=map_center, zoom=zoom)},
+                    ],
+                ),
+                dict(
+                    label="Mostrar Ambas",
+                    method="update",
+                    args=[
+                        {"visible": [True, show_original_line, True, True]},
+                        {"mapbox": dict(center=map_center, zoom=zoom)},
+                    ],
+                ),
+                dict(
+                    label=f"Apenas {original_label}",
+                    method="update",
+                    args=[
+                        {"visible": [True, show_original_line, False, False]},
+                        {"mapbox": dict(center=map_center, zoom=zoom)},
+                    ],
+                ),
+                dict(
+                    label=f"Apenas {calculated_label}",
+                    method="update",
+                    args=[
+                        {"visible": [False, False, True, True]},
+                        {"mapbox": dict(center=map_center, zoom=zoom)},
+                    ],
+                ),
+            ],
+        )
+    ]
+
+
+def _map_osmid_to_edges(
+    graph: nx.Graph | nx.MultiDiGraph,
+) -> dict[str, list[tuple[int, int]]]:
+    """Map OSM IDs to graph edges."""
     osmid_to_edge_map: dict[str, list[tuple[int, int]]] = {}
     for u, v, data in graph.edges(data=True):
         osmids = data.get("osmid")
@@ -163,80 +143,152 @@ def __map_osmid_to_edges(graph: nx.Graph) -> dict[str, list[tuple[int, int]]]:
     return osmid_to_edge_map
 
 
-type edge_id = str
+def _create_path_trace(
+    osmid_list: list[EdgeID],
+    osmid_to_edge_map: dict[str, list[tuple[int, int]]],
+    pos: dict[int, tuple[float, float]],
+    color: str,
+    name: str,
+    width: int = 4,
+) -> go.Scatter:
+    """Create a trace for a path of OSM IDs."""
+    x_coords, y_coords = [], []
+    hover_texts = []
+    prev_coords = None
+    missing = []
+
+    for osmid in osmid_list:
+        candidates = osmid_to_edge_map.get(str(osmid))
+        if not candidates:
+            missing.append(osmid)
+            continue
+
+        for u, v in candidates:
+            ux, uy = pos[u]
+            vx, vy = pos[v]
+
+            segment = [(ux, uy), (vx, vy)]
+
+            # if previous segment doesn't end at this start, try to reverse for continuity
+            if prev_coords and prev_coords != segment[0]:
+                if prev_coords == segment[1]:
+                    segment.reverse()
+                elif not _distance(prev_coords, segment[0]) < 0.00005:  # ~5m tolerance
+                    # if still not connected, insert a gap (None)
+                    x_coords.append(None)
+                    y_coords.append(None)
+                    hover_texts.append(None)
+
+            # add to path
+            for x, y in segment:
+                x_coords.append(x)
+                y_coords.append(y)
+                hover_texts.append(f"osmid: {osmid}")
+
+            prev_coords = segment[-1]
+
+    if missing:
+        print(
+            f"⚠️  Warning: {len(missing)} OSMIDs not found in graph: {missing[:5]}{'...' if len(missing) > 5 else ''}"
+        )
+
+    return go.Scatter(
+        x=x_coords,
+        y=y_coords,
+        mode="lines",
+        line=dict(color=color, width=width),
+        name=name,
+        visible=True,
+        hoverinfo="text",
+        text=hover_texts,
+    )
+
+
+# --- Main Functions ---
+def plot_trajectories(
+    original: list[Point],
+    calculated: list[Point],
+    title: str = "Tracks",
+    original_label: str = "Original",
+    calculated_label: str = "Calculated",
+    show_original_line: bool = True,
+    show_buttons: bool = True,
+    center_lat: float | None = None,
+    center_lon: float | None = None,
+    zoom: float = 14,
+) -> None:
+    """Plot original and calculated trajectories on a map."""
+    flat_original = [
+        (lat, lon, original_label, i) for i, (lat, lon) in enumerate(original)
+    ]
+    flat_calculated = [
+        (lat, lon, calculated_label, i) for i, (lat, lon) in enumerate(calculated)
+    ]
+
+    df = pd.DataFrame(
+        flat_original + flat_calculated,
+        columns=["lat", "lon", "type", "row_num"],  # type: ignore
+    )
+
+    fig = go.Figure()
+
+    for type_ in [original_label, calculated_label]:
+        subset = df[df["type"] == type_].sort_values(by=["row_num"])  # type: ignore
+
+        # Points
+        fig.add_trace(
+            _create_scatter_trace(subset, type_, "markers", size=10, visible=True)
+        )
+
+        # Lines
+        show_line = True
+        if type_ == original_label and not show_original_line:
+            show_line = False
+
+        fig.add_trace(
+            _create_scatter_trace(subset, type_, "lines", width=2, visible=show_line)
+        )
+
+    # Define map center
+    if center_lat is None or center_lon is None:
+        map_center = dict(lat=float(df["lat"].mean()), lon=float(df["lon"].mean()))
+    else:
+        map_center = dict(lat=center_lat, lon=center_lon)
+
+    updatemenus = None
+    if show_buttons:
+        updatemenus = _create_buttons(
+            original_label, calculated_label, show_original_line, map_center, zoom
+        )
+
+    fig.update_layout(_create_layout(title, map_center, zoom, updatemenus))
+
+    fig.show()
 
 
 def plot_map_matching_from_osmid(
-    graph: nx.Graph,
-    ground_truth_osmid_path: list[edge_id],
-    map_matched_osmid_path: list[edge_id],
-):
+    graph: nx.Graph | nx.MultiDiGraph | str,
+    ground_truth_osmid_path: list[EdgeID],
+    map_matched_osmid_path: list[EdgeID],
+) -> None:
     """
-    Plota caminhos ground truth e map matched em um grafo OSMnx a partir de listas de osmids.
-    Corrigida para lidar com osmids múltiplos, tipos variados e inconsistências.
-    Mostra o osmid no hover dos edges.
+    Plot ground truth and map matched paths on an OSMnx graph from lists of osmids.
+
+    Args:
+        graph: NetworkX graph or place name (str) to load from OSMnx.
+        ground_truth_osmid_path: List of OSM IDs for ground truth path.
+        map_matched_osmid_path: List of OSM IDs for matched path.
     """
+    if isinstance(graph, str):
+        print(f"Loading graph for place: {graph}...")
+        graph = ox.graph_from_place(graph, network_type="drive")
+        print("Graph loaded.")
 
     # --- Node positions ---
     pos = {node: (data["x"], data["y"]) for node, data in graph.nodes(data=True)}
 
-    # --- OSMID → Edges map (robusta) ---
-    osmid_to_edge_map = __map_osmid_to_edges(graph)
-
-    # --- Trace builder ---
-    def create_ordered_path_trace(osmid_list, color, name, width=4):
-        x_coords, y_coords = [], []
-        hover_texts = []
-        prev_coords = None
-        missing = []
-
-        for osmid in osmid_list:
-            candidates = osmid_to_edge_map.get(str(osmid))
-            if not candidates:
-                missing.append(osmid)
-                continue
-
-            for u, v in candidates:
-                ux, uy = pos[u]
-                vx, vy = pos[v]
-
-                segment = [(ux, uy), (vx, vy)]
-
-                # if previous segment doesn't end at this start, try to reverse for continuity
-                if prev_coords and prev_coords != segment[0]:
-                    if prev_coords == segment[1]:
-                        segment.reverse()
-                    elif (
-                        not __distance(prev_coords, segment[0]) < 0.00005
-                    ):  # ~5m tolerance
-                        # if still not connected, insert a gap (None)
-                        x_coords.append(None)
-                        y_coords.append(None)
-                        hover_texts.append(None)
-
-                # add to path
-                for x, y in segment:
-                    x_coords.append(x)
-                    y_coords.append(y)
-                    hover_texts.append(f"osmid: {osmid}")
-
-                prev_coords = segment[-1]
-
-        if missing:
-            print(
-                f"⚠️  Warning: {len(missing)} OSMIDs not found in graph: {missing[:5]}{'...' if len(missing) > 5 else ''}"
-            )
-
-        return go.Scatter(
-            x=x_coords,
-            y=y_coords,
-            mode="lines",
-            line=dict(color=color, width=width),
-            name=name,
-            visible=True,
-            hoverinfo="text",
-            text=hover_texts,
-        )
+    # --- OSMID → Edges map ---
+    osmid_to_edge_map = _map_osmid_to_edges(graph)
 
     # --- Figure data ---
     traces = []
@@ -265,13 +317,25 @@ def plot_map_matching_from_osmid(
     # 1. Ground Truth
     if ground_truth_osmid_path:
         traces.append(
-            create_ordered_path_trace(ground_truth_osmid_path, "green", "Ground Truth")
+            _create_path_trace(
+                ground_truth_osmid_path,
+                osmid_to_edge_map,
+                pos,
+                "green",
+                "Ground Truth",
+            )
         )
 
     # 2. Map Matched
     if map_matched_osmid_path:
         traces.append(
-            create_ordered_path_trace(map_matched_osmid_path, "blue", "Map Matched")
+            _create_path_trace(
+                map_matched_osmid_path,
+                osmid_to_edge_map,
+                pos,
+                "blue",
+                "Map Matched",
+            )
         )
 
     node_markers = go.Scatter(
@@ -285,7 +349,7 @@ def plot_map_matching_from_osmid(
         visible=False,
     )
 
-    # --- Layout e botões ---
+    # --- Layout and buttons ---
     show_nodes = dict(
         label="Show Nodes",
         method="update",

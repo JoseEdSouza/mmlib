@@ -1,24 +1,26 @@
 from datetime import datetime
-from typing import  Sequence
+from typing import NamedTuple, Sequence
 
 from gpx.gpx import GPX
-from gpx.waypoint import Waypoint
 from gpx.track import Track
 from gpx.track_segment import TrackSegment
 from gpx.types import Latitude, Longitude
-from typing import NamedTuple
+from gpx.waypoint import Waypoint
 
-"""
-Type alias for GPS coordinates with timestamp
-follows the RFC 3339 format for timestamps
-(latitude, longitude, timestamp)
-"""
+
 class GPSPoint(NamedTuple):
+    """
+    Type alias for GPS coordinates with timestamp.
+    Follows the RFC 3339 format for timestamps.
+    (latitude, longitude, timestamp)
+    """
+
     lat: float
     lon: float
     time: datetime
 
-def __create_waypoint(point: GPSPoint) -> Waypoint:
+
+def _create_waypoint(point: GPSPoint) -> Waypoint:
     w = Waypoint()
     lat, lon, time = point
     w.lon = Longitude(lon)
@@ -27,8 +29,8 @@ def __create_waypoint(point: GPSPoint) -> Waypoint:
     return w
 
 
-def __to_track(points: Sequence[GPSPoint]) -> Track:
-    wps = [__create_waypoint(p) for p in points]
+def _to_track(points: Sequence[GPSPoint]) -> Track:
+    wps = [_create_waypoint(p) for p in points]
 
     ts = TrackSegment()
     ts.points.extend(wps)
@@ -36,21 +38,22 @@ def __to_track(points: Sequence[GPSPoint]) -> Track:
     trk = Track()
     trk.trksegs.append(ts)
 
-    return trk  
+    return trk
 
 
-# receives a list of GPS points and returns a GPX object
-# each GPS point is a tuple (latitude, longitude, timestamp)
 def to_gpx(points: Sequence[GPSPoint]) -> str:
     """
-    Convert waypoints, tracks, and routes to a GPX object.
+    Convert a sequence of GPS points to a GPX string.
 
-    :param waypoints: List of waypoints.
-    :return: GPX object as a string.
+    Args:
+        points: Sequence of GPSPoint (lat, lon, time).
+
+    Returns:
+        str: GPX XML string.
     """
     gpx = GPX()
 
-    trk = __to_track(points)
+    trk = _to_track(points)
 
     gpx.tracks.append(trk)
 
