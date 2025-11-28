@@ -1,0 +1,37 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# ide and text editor settings
+.vscode/
+.idea/
+.ruff_cache/
+__pycache__/
+
+# cache
+.cache/
+cache
+
+# Virtual environments
+.venv
+
+# data dirs
+*/data/*
+data
+output
+
+#volumes
+*/volumes/*
+graphhopper_data
+osrm_data
+
+# heavy osm files and road network files
+networks
+osm
+
+# network files
+*.net.xml
