@@ -8,9 +8,10 @@ from mmlib.matcher.base import BaseMatcher
 from mmlib.result import MatchResult
 from mmlib.utils.gpx import to_gpx
 from mmlib.types.points import GPSPoint, Coordinate
+from mmlib.utils import factory
 
 
-class Matcher(BaseMatcher):
+class GraphHopperMatcher(BaseMatcher):
     _base_url: str
     _gps_accuracy: int
     _profile: str
@@ -69,5 +70,6 @@ class Matcher(BaseMatcher):
         }
 
 
-def graphhopper_matcher(base_url: str) -> Matcher:
-    return Matcher(base_url=base_url)
+@factory(GraphHopperMatcher)
+def graphhopper_matcher(*args, **kwargs) -> BaseMatcher:
+    return GraphHopperMatcher(*args, **kwargs)

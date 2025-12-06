@@ -247,7 +247,7 @@ wheels = [
 [[package]]
 name = "mmlib"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "gpx" },
     { name = "networkx" },
@@ -257,6 +257,7 @@ dependencies = [
     { name = "polyline" },
     { name = "pyzmq" },
     { name = "requests" },
+    { name = "shapely" },
 ]
 
 [package.dev-dependencies]
@@ -276,6 +277,7 @@ requires-dist = [
     { name = "polyline", specifier = ">=2.0.3" },
     { name = "pyzmq", specifier = ">=27.1.0" },
     { name = "requests", specifier = ">=2.32.5" },
+    { name = "shapely", specifier = ">=2.1.2" },
 ]
 
 [package.metadata.requires-dev]
