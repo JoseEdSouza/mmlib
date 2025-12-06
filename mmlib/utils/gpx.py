@@ -1,5 +1,4 @@
-from datetime import datetime
-from typing import NamedTuple, Sequence
+from typing import Sequence
 
 from gpx.gpx import GPX
 from gpx.track import Track
@@ -7,17 +6,7 @@ from gpx.track_segment import TrackSegment
 from gpx.types import Latitude, Longitude
 from gpx.waypoint import Waypoint
 
-
-class GPSPoint(NamedTuple):
-    """
-    Type alias for GPS coordinates with timestamp.
-    Follows the RFC 3339 format for timestamps.
-    (latitude, longitude, timestamp)
-    """
-
-    lat: float
-    lon: float
-    time: datetime
+from mmlib.types.points import GPSPoint
 
 
 def _create_waypoint(point: GPSPoint) -> Waypoint:

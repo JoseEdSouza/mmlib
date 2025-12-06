@@ -1,25 +1,9 @@
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import networkx as nx
 
-from mmlib.gpx import GPSPoint
-
-
-@dataclass
-class Coordinate:
-    """Represents a geographical coordinate."""
-
-    latitude: float
-    longitude: float
-
-    def to_tuple(self) -> tuple[float, float]:
-        """Convert the coordinate to a tuple representation.
-
-        Returns:
-            tuple[float, float]: The latitude and longitude as a tuple.
-        """
-        return (self.latitude, self.longitude)
+from mmlib import graphhopper_matcher
+from mmlib.types import Coordinate, GPSPoint
 
 
 @dataclass
@@ -27,9 +11,9 @@ class MatchResult:
     """Represents the result of a map matching operation."""
 
     matcher_name: str
-    measurement_points: list[Coordinate]
-    matched_points: list[Coordinate]
-    edge_ids: list[str]
+    measurement_points: list[GPSPoint] = field(default_factory=list)
+    matched_points: list[Coordinate] = field(default_factory=list)
+    edge_ids: list[str] = field(default_factory=list)
 
     def plot(
         self,
@@ -58,8 +42,8 @@ class MatchResult:
             calculated_label = f"{self.matcher_name} Match"
 
         plot_trajectories(
-            original=[pt.to_tuple() for pt in self.measurement_points],
-            calculated=[pt.to_tuple() for pt in self.matched_points],
+            original=[pt.coordinate.as_tuple for pt in self.measurement_points],
+            calculated=[pt.as_tuple for pt in self.matched_points],
             title=title,
             original_label=original_label,
             calculated_label=calculated_label,
@@ -77,7 +61,7 @@ class MatchResult:
 
         Args:
             graph: NetworkX graph representing the street network or a place name (str).
-            ground_truth_edge_ids: Optional list of ground truth edge IDs.
+            ground_truth_edge_ids: Optional list of ground-truth-edge IDs.
         """
         from mmlib.mmplot.plot import plot_map_matching_from_osmid
 
@@ -86,19 +70,3 @@ class MatchResult:
             ground_truth_osmid_path=ground_truth_edge_ids or [],
             map_matched_osmid_path=self.edge_ids,
         )
-
-
-class BaseMatcher(ABC):
-    """Matcher is a base class for map matching implementations."""
-
-    @abstractmethod
-    def match(self, points: list[GPSPoint]) -> MatchResult:
-        """Map match the provided GPX points.
-
-        Args:
-            points (list[GPSPoint]): The GPX points to map match.
-
-        Returns:
-            MatchResult: The result of the map matching process.
-        """
-        ...

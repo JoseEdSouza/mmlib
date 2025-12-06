@@ -1,6 +1,6 @@
-from .matcher import BaseMatcher
-from .graphhopper.matcher import graphhopper_matcher
-from .gpx import to_gpx
+from mmlib.matcher.base import BaseMatcher
+from mmlib.matcher.offline.graphhopper.matcher import graphhopper_matcher
+from mmlib.utils.gpx import to_gpx
 
 __all__ = [
     "BaseMatcher",

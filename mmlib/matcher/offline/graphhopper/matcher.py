@@ -4,8 +4,10 @@ from typing import Any
 import polyline
 import requests
 
-from mmlib.gpx import GPSPoint, to_gpx
-from mmlib.matcher import BaseMatcher, Coordinate, MatchResult
+from mmlib.matcher.base import BaseMatcher
+from mmlib.result import MatchResult
+from mmlib.utils.gpx import to_gpx
+from mmlib.types.points import GPSPoint, Coordinate
 
 
 class Matcher(BaseMatcher):
@@ -33,12 +35,8 @@ class Matcher(BaseMatcher):
         edge_ids = [str(edge) for (_, __, edge) in response["edge_ids"]]
         return MatchResult(
             matcher_name="GraphHopper",
-            measurement_points=[
-                Coordinate(latitude=lat, longitude=lon) for lat, lon, _ in points
-            ],
-            matched_points=[
-                Coordinate(latitude=lat, longitude=lon) for lat, lon in res_points
-            ],
+            measurement_points=points,
+            matched_points=[Coordinate(lat, lon) for lat, lon in res_points],
             edge_ids=edge_ids,
         )
 
