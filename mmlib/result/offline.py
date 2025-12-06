@@ -2,7 +2,6 @@ from dataclasses import dataclass, field
 
 import networkx as nx
 
-from mmlib import graphhopper_matcher
 from mmlib.types import Coordinate, GPSPoint
 
 
