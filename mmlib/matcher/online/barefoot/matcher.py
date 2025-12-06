@@ -77,7 +77,8 @@ class Matcher(BaseOnlineMatcher):
 
     @override
     def match(self, points: AsyncIterable[GPSPoint]) -> OnlineMatchResult:
-        return asyncio.run(self._match(points))
+        loop = asyncio.get_event_loop()
+        return loop.run_until_complete(self._match(points))
 
     async def write_job(
         self, writer: asyncio.StreamWriter, points: AsyncIterable[GPSPoint]
