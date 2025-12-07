@@ -59,7 +59,7 @@ class BarefootMatcher(BaseOnlineMatcher):
         self._result = OnlineMatchResult(matcher_name=self._matcher_name)
         self._pending: dict[int, GPSPoint] = {}
         self._pending_lock = asyncio.Lock()
-        self._send_queue: asyncio.Queue[GPSPoint | None] = asyncio.Queue()
+        self._send_queue: asyncio.Queue[None] = asyncio.Queue()
 
     # -------------------------------------------------------------------------
     # Context manager
@@ -88,7 +88,6 @@ class BarefootMatcher(BaseOnlineMatcher):
     # -------------------------------------------------------------------------
     # Public API
     # -------------------------------------------------------------------------
-
     @override
     async def match_stream(
         self, points: AsyncIterable[GPSPoint]
@@ -100,9 +99,10 @@ class BarefootMatcher(BaseOnlineMatcher):
         try:
             while True:
                 # Wait for next expected point (or end of stream)
-                token = await self._send_queue.get()
-                if token is None:
-                    break
+                if not self._send_queue.empty():
+                    token = await self._send_queue.get()
+                    if token is None:
+                        break
 
                 try:
                     raw = await asyncio.wait_for(socket.recv(), timeout=self._timeout)
@@ -200,8 +200,6 @@ class BarefootMatcher(BaseOnlineMatcher):
                     await self._send_point_and_wait_ack(
                         pt, timestamp_ms, reader, writer
                     )
-                    # Signal that a message is expected on ZMQ
-                    await self._send_queue.put(pt)
                 except Exception:
                     # Remove pending entry on failure
                     async with self._pending_lock:
