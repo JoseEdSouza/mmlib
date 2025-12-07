@@ -10,7 +10,7 @@ from mmlib.types.points import GPSPoint
 
 
 def _create_waypoint(point: GPSPoint) -> Waypoint:
-    w = Waypoint()
+    w = Waypoint(None)
     lat, lon, time = point
     w.lon = Longitude(lon)
     w.lat = Latitude(lat)
