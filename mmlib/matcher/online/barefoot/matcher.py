@@ -154,6 +154,10 @@ class BarefootMatcher(BaseOnlineMatcher):
 
                     data: _StateMessage = self._parse_state_message(raw)
                     coordinate = self._extract_coordinate(data)
+                    if not coordinate:
+                        logger.warning("Received empty matched point from Barefoot")
+                        continue
+                    
                     edge_id = self._snap_matched_point_to_edge(coordinate)
 
                     # Update accumulated result
@@ -219,13 +223,12 @@ class BarefootMatcher(BaseOnlineMatcher):
         return data
 
     @staticmethod
-    def _extract_coordinate(data: _StateMessage) -> Coordinate:
+    def _extract_coordinate(data: _StateMessage) -> Coordinate | None:
         """
         Converts a WKT point ("POINT(lon lat)") into a Coordinate object.
         """
         if len(data) == 0 or "point" not in data:
-            print(data)
-            raise ValueError("Invalid state message format")
+            return None
         x, y = wkt.loads(data["point"]).coords[0]
         return Coordinate(lon=x, lat=y)
 
