@@ -10,22 +10,19 @@ from mmlib.types.points import GPSPoint
 
 
 def _create_waypoint(point: GPSPoint) -> Waypoint:
-    w = Waypoint(None)
     lat, lon, time = point
-    w.lon = Longitude(lon)
-    w.lat = Latitude(lat)
-    w.time = time
+    w = Waypoint(
+        lat=Latitude(lat), lon=Longitude(lon), time=time
+    )
     return w
 
 
 def _to_track(points: Sequence[GPSPoint]) -> Track:
     wps = [_create_waypoint(p) for p in points]
 
-    ts = TrackSegment()
-    ts.points.extend(wps)
+    ts = TrackSegment(trkpt=wps)
 
-    trk = Track()
-    trk.trksegs.append(ts)
+    trk = Track(trkseg=[ts])
 
     return trk
 
