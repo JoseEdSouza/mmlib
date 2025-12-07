@@ -36,7 +36,7 @@ class GraphHopperMatcher(BaseMatcher):
         edge_ids = [str(edge) for (_, __, edge) in response["edge_ids"]]
         return MatchResult(
             matcher_name="GraphHopper",
-            measurement_points=points,
+            measurement_points=[GPSPoint(lat, lon, time) for lat, lon, time in points],
             matched_points=[Coordinate(lat, lon) for lat, lon in res_points],
             edge_ids=edge_ids,
         )
