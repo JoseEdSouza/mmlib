@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-import asyncio
 from typing import AsyncIterable, AsyncIterator, Self
 
 from mmlib.result import MatchResult, OnlineMatchResult
@@ -68,7 +67,6 @@ class BaseOnlineMatcher(ABC):
             async for result in self.match_stream(_gen()):
                 last = result
                 print(len(result.matched_points))
-                await asyncio.sleep(0.2)
 
         # If points is not empty, "last is None" indicates a bug/broken contract
         if last is None:

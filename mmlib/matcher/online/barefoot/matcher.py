@@ -7,6 +7,7 @@ from shapely import wkt
 
 from mmlib.matcher.base import BaseOnlineMatcher
 from mmlib.matcher.online.barefoot._communicator import _BarefootCommunicator
+from mmlib.matcher.online.barefoot._synchronizer import _Synchronizer
 from mmlib.matcher.online.barefoot._types import _PointMessage, _StateMessage
 from mmlib.result import OnlineMatchResult
 from mmlib.types import Coordinate, GPSPoint
@@ -19,9 +20,9 @@ class BarefootMatcher(BaseOnlineMatcher):
     """Online matcher using Barefoot (TCP publish + ZMQ subscribe).
 
     Notes:
-    - There is no 1:1 relationship between sent points and received states.
-    - When the input stream ends, we keep draining states until we observe
-      `drain_timeout` seconds of silence.
+    - There is a 1:1 relationship between sent points and received states.
+    - When the input stream ends, we keep draining states until all sent
+      points are received or we observe `drain_timeout` seconds of silence.
     """
 
     _matcher_name: Final[str] = "barefoot"
@@ -45,6 +46,7 @@ class BarefootMatcher(BaseOnlineMatcher):
         self._drain_timeout = drain_timeout
         self._comm = _BarefootCommunicator(pub_host, pub_port, sub_host, sub_port)
         self._result = OnlineMatchResult(matcher_name=self._matcher_name)
+        self._sync = _Synchronizer(max_inflight=1)
 
     @override
     async def __aenter__(self) -> Self:
@@ -60,6 +62,7 @@ class BarefootMatcher(BaseOnlineMatcher):
         self, points: AsyncIterable[GPSPoint]
     ) -> AsyncIterator[OnlineMatchResult]:
         sending_done = asyncio.Event()
+
         sender_task = asyncio.create_task(
             self._sender(points, sending_done), name="barefoot_sender"
         )
@@ -77,6 +80,9 @@ class BarefootMatcher(BaseOnlineMatcher):
     ) -> None:
         try:
             async for pt in points:
+                # Wait for the previous point to be processed (strict 1:1)
+                await self._sync.wait_to_send()
+
                 msg: _PointMessage = {
                     "id": self._vehicle_id,
                     "time": int(pt.time.timestamp() * 1000),
@@ -84,6 +90,7 @@ class BarefootMatcher(BaseOnlineMatcher):
                 }
                 try:
                     await asyncio.wait_for(self._comm.submit_point(msg), timeout=3.0)
+                    await self._sync.notify_sent()
                     self._result._update_sent(pt)
                 except asyncio.TimeoutError:
                     logger.warning("Timeout sending point to Barefoot; continuing.")
@@ -98,22 +105,33 @@ class BarefootMatcher(BaseOnlineMatcher):
         state_iter = aiter(self._comm.messages())
 
         while True:
-            try:
-                # Se o sender acabou (com sucesso ou erro), começamos a drenar com timeout.
-                draining = sending_done.is_set() or sender_task.done()
+            # Check if we should stop
+            if await self._sync.is_finished(sending_done.is_set() or sender_task.done()):
+                return
 
+            try:
+                # Use drain_timeout as a safety buffer
                 state = await asyncio.wait_for(
                     anext(state_iter),
-                    timeout=self._drain_timeout if draining else None,
+                    timeout=self._drain_timeout,
                 )
             except asyncio.TimeoutError:
-                logger.debug(
-                    "No barefoot states for %.1fs after last point, closing.",
-                    self._drain_timeout,
-                )
-                return
+                if await self._sync.is_finished(
+                    sending_done.is_set() or sender_task.done()
+                ):
+                    logger.debug(
+                        "Timeout waiting for barefoot states (sent: %d, received: %d). Closing.",
+                        self._sync.sent_count,
+                        self._sync.received_count,
+                    )
+                    return
+                else:
+                    continue
             except StopAsyncIteration:
                 return
+
+            # Mark as processed and notify sender
+            await self._sync.notify_received()
 
             coord = self._state_to_coordinate(state)
             if coord is None:
