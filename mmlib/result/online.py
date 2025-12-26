@@ -35,13 +35,8 @@ class OnlineMatchResult(BaseMatchResult):
     def __aiter__(self) -> AsyncIterable[Coordinate]:
         return self._stream()
 
-    def _update(
-        self,
-        new_point: GPSPoint | Coordinate | None,
-        matched_point: Coordinate | None = None,
-        edge_id: str | None = None,
-    ):
-        """Updates state AND emits matched points into the async stream."""
+    def _update_sent(self, new_point: GPSPoint | Coordinate | None):
+        """Updates state WITHOUT emitting matched points into the async stream."""
         if new_point:
             if isinstance(new_point, GPSPoint):
                 self.measurement_points.append(new_point)
@@ -54,6 +49,13 @@ class OnlineMatchResult(BaseMatchResult):
                 self.measurement_points.append(
                     GPSPoint(lat=new_point.lat, lon=new_point.lon, time=datetime.now())
                 )
+
+    def _update_matched(
+        self,
+        matched_point: Coordinate | None = None,
+        edge_id: str | None = None,
+    ):
+        """Updates state AND emits matched points into the async stream."""
 
         if matched_point:
             self.matched_points.append(matched_point)
