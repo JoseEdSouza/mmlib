@@ -14,7 +14,8 @@ class _StateMessage(TypedDict):
     id: str
     time: int       # Timestamp da última amostra
     point: str      # WKT POINT (amostra original)
-    osm_id: int     
+    osm_id: int
+    path_osm_ids: list[int]     
     osm_type: str
     edge_gid: int
     source: int

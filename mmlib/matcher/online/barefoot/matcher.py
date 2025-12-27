@@ -141,8 +141,10 @@ class BarefootMatcher(BaseOnlineMatcher):
             return
         self._result._update_matched(
             matched_point=coord,
-            edge_id=self._state_to_edge_id(state),
+            edge_id=None,
         )
+        if (path := state.get("path_osm_ids")) is not None and len(path) > 0:
+            self._result.edge_ids = [str(osm_id) for osm_id in path]
 
     def _snapshot_result(self) -> OnlineMatchResult:
         # Snapshot to avoid yielding the same mutable object repeatedly

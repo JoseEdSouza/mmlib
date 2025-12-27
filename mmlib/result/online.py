@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import AsyncIterable, AsyncGenerator
 
 from mmlib.types import Coordinate, GPSPoint
@@ -44,7 +45,6 @@ class OnlineMatchResult(BaseMatchResult):
                 # Manually construct GPSPoint with a default time if strict typing requires non-None
                 # Or update GPSPoint definition to allow None time (it usually does or uses Optional)
                 # Assuming GPSPoint.time is datetime | None:
-                from datetime import datetime
 
                 self.measurement_points.append(
                     GPSPoint(lat=new_point.lat, lon=new_point.lon, time=datetime.now())
