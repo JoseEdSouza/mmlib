@@ -66,8 +66,7 @@ class BaseOnlineMatcher(ABC):
         async with self:
             async for result in self.match_stream(_gen()):
                 last = result
-                print(len(result.matched_points))
-
+        
         # If points is not empty, "last is None" indicates a bug/broken contract
         if last is None:
             raise RuntimeError("match_stream emitted no results for non-empty input")
