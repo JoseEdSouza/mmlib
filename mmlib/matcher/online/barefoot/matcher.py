@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import logging
 from collections.abc import AsyncIterable, AsyncIterator
 from typing import Final, Self, override
@@ -20,9 +21,9 @@ class BarefootMatcher(BaseOnlineMatcher):
     """Online matcher using Barefoot (TCP publish + ZMQ subscribe).
 
     Notes:
-    - There is a 1:1 relationship between sent points and received states.
-    - When the input stream ends, we keep draining states until all sent
-      points are received or we observe `drain_timeout` seconds of silence.
+    - Strict 1:1 send/receive (max_inflight=1).
+    - After input ends, we drain until all sent are received, or `drain_timeout` silence.
+    - Defensive correlation via (id, time) to avoid mixing vehicles/out-of-order/duplicates.
     """
 
     _matcher_name: Final[str] = "barefoot"
@@ -45,8 +46,13 @@ class BarefootMatcher(BaseOnlineMatcher):
         self._vehicle_id = vehicle_id
         self._drain_timeout = drain_timeout
         self._comm = _BarefootCommunicator(pub_host, pub_port, sub_host, sub_port)
+
         self._result = OnlineMatchResult(matcher_name=self._matcher_name)
         self._sync = _Synchronizer(max_inflight=1)
+
+        # Correlation guards
+        self._last_sent_time_ms: int | None = None
+        self._last_received_time_ms: int | None = None
 
     @override
     async def __aenter__(self) -> Self:
@@ -62,7 +68,6 @@ class BarefootMatcher(BaseOnlineMatcher):
         self, points: AsyncIterable[GPSPoint]
     ) -> AsyncIterator[OnlineMatchResult]:
         sending_done = asyncio.Event()
-
         sender_task = asyncio.create_task(
             self._sender(points, sending_done), name="barefoot_sender"
         )
@@ -70,30 +75,99 @@ class BarefootMatcher(BaseOnlineMatcher):
         try:
             async for res in self._receiver(sending_done, sender_task):
                 yield res
-
         finally:
             sender_task.cancel()
             await asyncio.gather(sender_task, return_exceptions=True)
+
+    # ------------------------ helpers (sender) ------------------------
+
+    def _make_point_message(self, pt: GPSPoint) -> _PointMessage:
+        return {
+            "id": self._vehicle_id,
+            "time": int(pt.time.timestamp() * 1000),
+            "point": f"POINT({pt.coordinate.lon} {pt.coordinate.lat})",
+        }
+
+    async def _submit_point_with_timeout(
+        self, msg: _PointMessage, timeout_s: float
+    ) -> bool:
+        try:
+            await asyncio.wait_for(self._comm.submit_point(msg), timeout=timeout_s)
+            return True
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Timeout sending point to Barefoot; dropping and continuing."
+            )
+            return False
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "Unexpected error sending point to Barefoot; dropping and continuing."
+            )
+            return False
+
+    # ------------------------ helpers (receiver) ------------------------
+
+    def _should_accept_state(self, state: _StateMessage) -> bool:
+        # Vehicle filter
+        if state.get("id") != self._vehicle_id:
+            return False
+
+        st_time = state.get("time")
+        if st_time is None:
+            return False
+
+        # Drop duplicates / out-of-order states
+        if (
+            self._last_received_time_ms is not None
+            and st_time <= self._last_received_time_ms
+        ):
+            return False
+
+        # Safety: ignore states that go "backwards" relative to last successfully sent
+        if self._last_sent_time_ms is not None and st_time < self._last_sent_time_ms:
+            return False
+
+        # Must have a parseable point
+        if self._state_to_coordinate(state) is None:
+            return False
+
+        return True
+
+    def _update_result_from_state(self, state: _StateMessage) -> None:
+        coord = self._state_to_coordinate(state)
+        if coord is None:
+            return
+        self._result._update_matched(
+            matched_point=coord,
+            edge_id=self._state_to_edge_id(state),
+        )
+
+    def _snapshot_result(self) -> OnlineMatchResult:
+        # Snapshot to avoid yielding the same mutable object repeatedly
+        try:
+            return copy.deepcopy(self._result)
+        except Exception:
+            return self._result
+
+    # ------------------------ pipeline ------------------------
 
     async def _sender(
         self, points: AsyncIterable[GPSPoint], done: asyncio.Event
     ) -> None:
         try:
             async for pt in points:
-                # Wait for the previous point to be processed (strict 1:1)
                 await self._sync.wait_to_send()
 
-                msg: _PointMessage = {
-                    "id": self._vehicle_id,
-                    "time": int(pt.time.timestamp() * 1000),
-                    "point": f"POINT({pt.coordinate.lon} {pt.coordinate.lat})",
-                }
-                try:
-                    await asyncio.wait_for(self._comm.submit_point(msg), timeout=3.0)
-                    await self._sync.notify_sent()
-                    self._result._update_sent(pt)
-                except asyncio.TimeoutError:
-                    logger.warning("Timeout sending point to Barefoot; continuing.")
+                msg = self._make_point_message(pt)
+                ok = await self._submit_point_with_timeout(msg, timeout_s=3.0)
+                if not ok:
+                    continue
+
+                await self._sync.notify_sent()
+                self._last_sent_time_ms = msg["time"]
+                self._result._update_sent(pt)
         finally:
             done.set()
 
@@ -105,12 +179,12 @@ class BarefootMatcher(BaseOnlineMatcher):
         state_iter = aiter(self._comm.messages())
 
         while True:
-            # Check if we should stop
-            if await self._sync.is_finished(sending_done.is_set() or sender_task.done()):
+            if await self._sync.is_finished(
+                sending_done.is_set() or sender_task.done()
+            ):
                 return
 
             try:
-                # Use drain_timeout as a safety buffer
                 state = await asyncio.wait_for(
                     anext(state_iter),
                     timeout=self._drain_timeout,
@@ -125,31 +199,45 @@ class BarefootMatcher(BaseOnlineMatcher):
                         self._sync.received_count,
                     )
                     return
-                else:
-                    continue
+                continue
             except StopAsyncIteration:
                 return
-
-            # Mark as processed and notify sender
-            await self._sync.notify_received()
-
-            coord = self._state_to_coordinate(state)
-            if coord is None:
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                logger.exception(
+                    "Unexpected error receiving state from Barefoot; continuing."
+                )
                 continue
 
-            self._result._update_matched(
-                matched_point=coord,
-                edge_id=self._state_to_edge_id(state),
-            )
-            yield self._result
+            # Validate/correlate BEFORE releasing sender
+            try:
+                if not self._should_accept_state(state):
+                    continue
+            except Exception:
+                logger.exception("Error validating Barefoot state; ignoring.")
+                continue
+
+            self._last_received_time_ms = int(state["time"])
+            await self._sync.notify_received()
+
+            self._update_result_from_state(state)
+            yield self._snapshot_result()
+
+    # ------------------------ WKT helpers ------------------------
 
     @staticmethod
     def _state_to_coordinate(data: _StateMessage) -> Coordinate | None:
         pt_wkt = data.get("point")
         if not pt_wkt:
             return None
-        x, y = wkt.loads(pt_wkt).coords[0]
-        return Coordinate(lon=x, lat=y)
+        try:
+            geom = wkt.loads(pt_wkt)
+            x, y = geom.coords[0]
+            return Coordinate(lon=x, lat=y)
+        except Exception:
+            logger.warning("Invalid WKT point from Barefoot: %r", pt_wkt)
+            return None
 
     @staticmethod
     def _state_to_edge_id(data: _StateMessage) -> str | None:

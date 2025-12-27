@@ -6,7 +6,7 @@ import logging
 from queue import Queue
 import time
 import threading
-from typing import AsyncGenerator, AsyncIterator
+from typing import AsyncGenerator, AsyncIterator, cast
 
 import zmq
 import zmq.asyncio as azmq
@@ -29,15 +29,12 @@ def _open_socket(host: str, port: int):
 
 
 def _pub_point_sync(host: str, port: int, q: Queue[_PointMessage | None]) -> None:
-    s: socket.socket | None = None
-
-
     backoff = 0.2
 
     while True:
-        pt = q.get()  # BLOQUEANTE (ok, estamos na thread)
+        pt = q.get()
         if pt is None:
-            break
+            return
 
         payload = (json.dumps(pt) + "\n").encode("utf-8")
 
@@ -45,27 +42,17 @@ def _pub_point_sync(host: str, port: int, q: Queue[_PointMessage | None]) -> Non
             try:
                 with _open_socket(host, port) as s:
                     s.sendall(payload)
-                    logger.warning("Sent point to Barefoot (%s:%s): %s", host, port, pt)
+                    logger.debug("Sent point to Barefoot (%s:%s): %s", host, port, pt)
                 backoff = 0.2
                 break
 
             except OSError as e:
-                logger.warning("Error when sending to Barefoot (%s:%s): %s", host, port, e)
-                try:
-                    if s is not None:
-                        s.close()
-                finally:
-                    s = None
-                    
+                logger.warning(
+                    "Error when sending to Barefoot (%s:%s): %s", host, port, e
+                )
 
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 5.0)
-
-    if s is not None:
-        try:
-            s.close()
-        except OSError:
-            pass
 
 
 class _BarefootPointPublisher:
@@ -76,7 +63,9 @@ class _BarefootPointPublisher:
         self._thread: threading.Thread | None = None
 
     async def start(self) -> None:
-        logger.debug("Starting Barefoot point publisher to %s:%s", self._host, self._port)
+        logger.debug(
+            "Starting Barefoot point publisher to %s:%s", self._host, self._port
+        )
         if self._thread is None:
             self._thread = threading.Thread(
                 target=_pub_point_sync,
@@ -87,7 +76,9 @@ class _BarefootPointPublisher:
             self._thread.start()
 
     async def stop(self) -> None:
-        logger.debug("Stopping Barefoot point publisher to %s:%s", self._host, self._port)
+        logger.debug(
+            "Stopping Barefoot point publisher to %s:%s", self._host, self._port
+        )
         # Sinaliza fim
         self._q.put(None)
         if self._thread is not None:
@@ -113,15 +104,24 @@ class _BarefootPointPublisher:
 
 async def _read_socket(socket: azmq.Socket) -> AsyncGenerator[_StateMessage, None]:
     while True:
-        raw = await socket.recv()
-        decoded = raw.decode("utf-8")
-        json_msg = json.loads(decoded)
         try:
-            msg = _StateMessage(**json_msg)
-            yield msg
-        except TypeError as e:
-            print(f"Error when deserializing message from Barefoot: {e}")
+            raw = await socket.recv()
+        except asyncio.CancelledError:
+            return
+        except zmq.error.ZMQError:
+            return
+
+        try:
+            decoded = raw.decode("utf-8")
+            json_msg = json.loads(decoded)
+        except Exception as e:
+            logger.warning("Error decoding Barefoot message: %s", e)
             continue
+
+        if not isinstance(json_msg, dict):
+            continue
+        yield cast(_StateMessage, json_msg)
+
 
 
 class _BarefootSubscriber:
