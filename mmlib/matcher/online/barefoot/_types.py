@@ -12,7 +12,7 @@ class _Candidate(TypedDict):
    
 class _StateMessage(TypedDict):
     id: str
-    time: int       # Timestamp da última amostra
+    time: float       # Timestamp da última amostra
     point: str      # WKT POINT (amostra original)
     osm_id: int
     path_osm_ids: list[int]     
