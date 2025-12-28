@@ -2,7 +2,7 @@ from typing import TypedDict
 
 class _PointMessage(TypedDict):
     id: str        # Identificador único do veículo/objeto
-    time: int      # Timestamp (geralmente milissegundos)
+    time: float      # Timestamp (geralmente milissegundos)
     point: str     # Formato WKT: "POINT(longitude latitude)"
 
 class _Candidate(TypedDict):

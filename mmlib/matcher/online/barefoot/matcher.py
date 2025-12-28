@@ -51,7 +51,7 @@ class BarefootMatcher(BaseOnlineMatcher):
         self._sync = _Synchronizer(max_inflight=1)
 
         # Correlation guards
-        self._last_sent_time_ms: int | None = None
+        self._last_sent_time_ms: float | None = None
         self._last_received_time_ms: int | None = None
 
     @override
@@ -84,7 +84,7 @@ class BarefootMatcher(BaseOnlineMatcher):
     def _make_point_message(self, pt: GPSPoint) -> _PointMessage:
         return {
             "id": self._vehicle_id,
-            "time": int(pt.time.timestamp() * 1000),
+            "time": pt.time.timestamp() * 1000,
             "point": f"POINT({pt.coordinate.lon} {pt.coordinate.lat})",
         }
 
