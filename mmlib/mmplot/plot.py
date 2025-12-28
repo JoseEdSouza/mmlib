@@ -55,7 +55,8 @@ def _create_layout(
     """Create the layout for the figure."""
     return go.Layout(
         mapbox_style="open-street-map",
-        mapbox=dict(center=map_center, zoom=zoom),
+        mapbox_center=map_center,
+        mapbox_zoom=zoom,
         margin=dict(l=0, r=0, t=80, b=0),
         height=height,
         title=title,
@@ -86,7 +87,7 @@ def _create_buttons(
                     method="update",
                     args=[
                         {"visible": [False, False, False, False]},
-                        {"mapbox": dict(center=map_center, zoom=zoom)},
+                        {"mapbox.center": map_center, "mapbox.zoom": zoom},
                     ],
                 ),
                 dict(
@@ -94,7 +95,7 @@ def _create_buttons(
                     method="update",
                     args=[
                         {"visible": [True, show_original_line, True, True]},
-                        {"mapbox": dict(center=map_center, zoom=zoom)},
+                        {"mapbox.center": map_center, "mapbox.zoom": zoom},
                     ],
                 ),
                 dict(
@@ -102,7 +103,7 @@ def _create_buttons(
                     method="update",
                     args=[
                         {"visible": [True, show_original_line, False, False]},
-                        {"mapbox": dict(center=map_center, zoom=zoom)},
+                        {"mapbox.center": map_center, "mapbox.zoom": zoom},
                     ],
                 ),
                 dict(
@@ -110,7 +111,7 @@ def _create_buttons(
                     method="update",
                     args=[
                         {"visible": [False, False, True, True]},
-                        {"mapbox": dict(center=map_center, zoom=zoom)},
+                        {"mapbox.center": map_center, "mapbox.zoom": zoom},
                     ],
                 ),
             ],
