@@ -263,6 +263,11 @@ def plot_trajectories(
         )
 
     fig.update_layout(_create_layout(title, map_center, zoom, updatemenus))
+    fig.update_layout(
+        mapbox_style="open-street-map",
+        mapbox_center=map_center,
+        mapbox_zoom=zoom,
+    )
 
     fig.show()
 
