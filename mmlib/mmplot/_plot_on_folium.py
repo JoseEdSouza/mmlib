@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import folium
 import networkx as nx
 import osmnx as ox
@@ -199,6 +200,10 @@ def _plot_on_folium(
     Returns:
         Folium Map object
     """
+
+    gt_path = list(OrderedDict.fromkeys(ground_truth_osmid_path).keys())
+    mm_path = list(OrderedDict.fromkeys(map_matched_osmid_path).keys())
+
     # Convert graph to GeoDataFrames
     nodes_wgs, edges_wgs = _convert_graph_to_geodataframes(graph)
 
@@ -214,11 +219,11 @@ def _plot_on_folium(
     _add_nodes_layer(m, nodes_wgs)
 
     # Add path layers (map matched first, then ground truth on top)
-    _add_path_layer(m, edges_wgs, map_matched_osmid_path, "Map Matched", "blue")
-    _add_path_layer(m, edges_wgs, ground_truth_osmid_path, "Ground Truth", "green")
+    _add_path_layer(m, edges_wgs, mm_path, "Map Matched", "blue")
+    _add_path_layer(m, edges_wgs, gt_path, "Ground Truth", "green")
 
     # Calculate and add statistics
-    stats = _calculate_statistics(ground_truth_osmid_path, map_matched_osmid_path)
+    stats = _calculate_statistics(gt_path, mm_path)
     stats_html = _build_statistics_html(stats)
     _add_statistics_box(m, stats_html)
 
