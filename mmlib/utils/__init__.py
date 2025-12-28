@@ -1,4 +1,4 @@
-from .gpx import to_gpx
-from .factory import factory
+from mmlib.utils.gpx import to_gpx
+from mmlib.utils.factory import factory
 
 __all__ = ["to_gpx", "factory"]

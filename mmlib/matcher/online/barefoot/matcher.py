@@ -17,7 +17,7 @@ from mmlib.utils import factory
 logger = logging.getLogger(__name__)
 
 
-class BarefootMatcher(BaseOnlineMatcher):
+class BarefootOnlineMatcher(BaseOnlineMatcher):
     """Online matcher using Barefoot (TCP publish + ZMQ subscribe).
 
     Notes:
@@ -247,6 +247,6 @@ class BarefootMatcher(BaseOnlineMatcher):
         return str(edge_gid) if edge_gid is not None else None
 
 
-@factory(BarefootMatcher)
-def barefoot_matcher(*args, **kwargs):
-    return BarefootMatcher(*args, **kwargs)
+@factory(BarefootOnlineMatcher)
+def barefoot_online_matcher(*args, **kwargs) -> BaseOnlineMatcher:
+    return BarefootOnlineMatcher(*args, **kwargs)
