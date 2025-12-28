@@ -201,8 +201,8 @@ def _plot_on_folium(
         Folium Map object
     """
 
-    gt_path = list(OrderedDict.fromkeys(ground_truth_osmid_path).keys())
-    mm_path = list(OrderedDict.fromkeys(map_matched_osmid_path).keys())
+    gt_path = list(OrderedDict.fromkeys(ground_truth_osmid_path))
+    mm_path = list(OrderedDict.fromkeys(map_matched_osmid_path))
 
     # Convert graph to GeoDataFrames
     nodes_wgs, edges_wgs = _convert_graph_to_geodataframes(graph)
