@@ -1,5 +1,6 @@
 import asyncio
 
+
 class _Synchronizer:
     """Synchronizes sending and receiving of points for 1:1 matching."""
 
@@ -13,7 +14,9 @@ class _Synchronizer:
     async def wait_to_send(self) -> None:
         """Blocks until the number of in-flight messages is below the limit."""
         async with self._condition:
-            await self._condition.wait_for(lambda: self._inflight_count < self._max_inflight)
+            await self._condition.wait_for(
+                lambda: self._inflight_count < self._max_inflight
+            )
 
     async def notify_sent(self) -> None:
         """Notifies the synchronizer that a message has been sent."""

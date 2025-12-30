@@ -123,7 +123,6 @@ async def _read_socket(socket: azmq.Socket) -> AsyncGenerator[_StateMessage, Non
         yield cast(_StateMessage, json_msg)
 
 
-
 class _BarefootSubscriber:
     def __init__(self, host: str, port: int | str) -> None:
         self._host = host

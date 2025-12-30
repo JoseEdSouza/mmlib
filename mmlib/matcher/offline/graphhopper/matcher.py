@@ -13,7 +13,7 @@ from mmlib.utils import factory
 
 class GraphHopperMatcher(BaseMatcher):
     """Offline matcher using GraphHopper Map Matching API."""
-    
+
     _matcher_name: Final[str] = "graphhopper"
 
     def __init__(
@@ -27,7 +27,7 @@ class GraphHopperMatcher(BaseMatcher):
         self._gps_accuracy = gps_accuracy
         self._profile = profile
         self._locale = locale
-    
+
     @property
     def matcher_name(self) -> str:
         return self._matcher_name

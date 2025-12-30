@@ -119,7 +119,7 @@ class BaseMatchResult(ABC):
             ground_truth_osmid_path=ground_truth_edge_ids or [],
             map_matched_osmid_path=self.edge_ids,
         )
-    
+
     def plot_on_folium(
         self,
         graph: nx.MultiDiGraph,
