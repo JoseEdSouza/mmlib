@@ -1,6 +1,7 @@
 import asyncio
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+import copy
 from typing import AsyncIterable, AsyncIterator, Final, override
 
 from shapely import LineString
@@ -88,20 +89,23 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
 
             if len(self._window_results_buffer) > self._lookahead:
                 # 2. Aggregate results applying dual stitching
-                agg_result = await self._agg_results()
+                results_snapshot = list(self._window_results_buffer)
+                agg_result = await self._agg_results(results_snapshot)
                 yield agg_result
 
         # Drain remaining windows
         while len(self._window_results_buffer) > 0:
-            agg_result = await self._agg_results()
+            results_snapshot = list(self._window_results_buffer)
+            agg_result = await self._agg_results(results_snapshot)
             yield agg_result
             self._window_results_buffer.popleft()
 
-    async def _agg_results(self) -> OnlineMatchResult:
+    async def _agg_results(self, results_snapshot: list[MatchResult]) -> OnlineMatchResult:
         """
         Aggregate results from the buffered windows, applying dual stitching.
         """
-        results_snapshot = list(self._window_results_buffer)
+        if not results_snapshot:
+            return copy.deepcopy(self._result)
 
         geometries = [LineString(res.matched_points) for res in results_snapshot]
 
@@ -122,7 +126,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         self._result.matched_points.extend(stiched_points)
         self._result.edge_ids.extend(stitched_edges or [])
 
-        return self._result
+        return copy.deepcopy(self._result)
 
     # --- STITCHING LOGIC ---
 
