@@ -1,14 +1,11 @@
 import asyncio
 import copy
 import numpy as np
-
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from typing import AsyncIterable, AsyncIterator, Final, override
 
-from typing import AsyncIterable, AsyncIterator, Final, cast, override
-
-from shapely import LineString, Point
-from shapely.ops import linemerge
+from geopy.distance import geodesic
 
 from mmlib.matcher.base import BaseMatcher, BaseOnlineMatcher
 from mmlib.result.offline import MatchResult
@@ -16,13 +13,10 @@ from mmlib.result.online import OnlineMatchResult
 from mmlib.types.points import Coordinate, GPSPoint
 from mmlib.utils import factory
 
+type Float64NDArray = np.ndarray[tuple[int, int], np.dtype[np.float64]]
+
 
 class FixedSlidingWindowMatcher(BaseOnlineMatcher):
-    """
-    Online matcher using Fixed Sliding Window (FSW) with Look-Ahead Stitching.
-    Implements Dual Stitching: Topological (Edges) and Geometric (Resampling + RMSE).
-    """
-
     _base_matcher_name: Final[str] = "FSW"
 
     def __init__(
@@ -33,20 +27,20 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         lookahead: int = 1,
     ) -> None:
         super().__init__()
-        if window_size <= 0 or lookahead < 0:
-            raise ValueError("window_size must be > 0 and lookahead must be >= 0.")
-
         self._matcher = matcher
         self._window_size = window_size
         self._lookahead = lookahead
 
+        # Buffers
         self._window_buffer: deque[GPSPoint] = deque(maxlen=self._window_size)
-        # Results buffer (Match results) for Look-Ahead decision making
         self._window_results_buffer: deque[MatchResult] = deque(
             maxlen=self._lookahead + 1
         )
-
         self._result = OnlineMatchResult(matcher_name=self.matcher_name)
+
+        # Overlap de entrada (Raw)
+        self._raw_input_overlap: list[GPSPoint] = []
+        self._input_overlap_size = 20
 
         self._executor: ThreadPoolExecutor | None = None
 
@@ -61,6 +55,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
             self._window_buffer = deque(maxlen=self._window_size)
             self._window_results_buffer = deque()
             self._result = OnlineMatchResult(matcher_name=self.matcher_name)
+            self._raw_input_overlap = []
             self._started = True
             self._executor = ThreadPoolExecutor(max_workers=1)
 
@@ -77,255 +72,267 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
     ) -> AsyncIterator[OnlineMatchResult]:
         await self.start()
 
+        batch_buffer = []
+
         async for point in points:
-            # 1. Accumulate raw points and update input tracking
             self._result._update_sent(point)
-            self._window_buffer.append(point)
+            batch_buffer.append(point)
 
-            snapshot = list(self._window_buffer)
+            # Lógica de enchimento da janela
+            if len(batch_buffer) + len(self._raw_input_overlap) >= self._window_size:
+                full_window = self._raw_input_overlap + batch_buffer
 
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                self._executor, self._matcher.match, snapshot
-            )
+                # Offload para thread (Matcher é CPU bound)
+                loop = asyncio.get_running_loop()
+                result = await loop.run_in_executor(
+                    self._executor, self._matcher.match, full_window
+                )
 
-            self._window_results_buffer.append(result)
+                self._window_results_buffer.append(result)
 
-            if len(self._window_results_buffer) > self._lookahead:
-                # 2. Aggregate results applying dual stitching
-                results_snapshot = list(self._window_results_buffer)
-                agg_result = await self._agg_results(results_snapshot)
+                # Atualiza overlap de entrada
+                self._raw_input_overlap = full_window[-self._input_overlap_size :]
+                batch_buffer = []
+
+                # Verifica se pode costurar (Lookahead)
+                if len(self._window_results_buffer) > self._lookahead:
+                    agg_result = await self._process_head_of_buffer()
+                    if agg_result:
+                        yield agg_result
+
+        # Drena buffer final
+        while len(self._window_results_buffer) > 0:
+            agg_result = await self._process_head_of_buffer()
+            if agg_result:
                 yield agg_result
 
-        # Drain remaining windows
-        while len(self._window_results_buffer) > 0:
-            results_snapshot = list(self._window_results_buffer)
-            agg_result = await self._agg_results(results_snapshot)
-            yield agg_result
-            self._window_results_buffer.popleft()
-
-    async def _agg_results(
-        self, results_snapshot: list[MatchResult]
-    ) -> OnlineMatchResult:
-        """
-        Aggregate results from the buffered windows, applying dual stitching.
-        """
-        if not results_snapshot:
-            return copy.deepcopy(self._result)
-
-        geometries = [
-            LineString([(lon, lat) for lat, lon in res.matched_points])
-            for res in results_snapshot
-        ]
-
-        edges_ids = [res.edge_ids for res in results_snapshot]
-
-        stitched_geometry = self._resolve_geometric_stitch(geometries)
-        stitched_edges = self._resolve_edge_stitch(edges_ids)
-
-        stiched_points = (
-            [
-                Coordinate(lon=lon, lat=lat)
-                for (lon, lat) in list(stitched_geometry.coords)
-            ]
-            if stitched_geometry
-            else []
-        )
-
-        self._result.matched_points.extend(stiched_points)
-        self._result.edge_ids.extend(stitched_edges or [])
-
-        return copy.deepcopy(self._result)
-
-    # --- STITCHING LOGIC ---
-
-    def _resolve_geometric_stitch(
-        self, lines: list[LineString], dissolve=True
-    ) -> LineString | None:
-        """
-        Une uma lista de LineStrings usando algoritmo de Overlap Geométrico
-        baseado em Reamostragem + RMSE para garantir continuidade visual.
-        """
-        if not lines:
+    async def _process_head_of_buffer(self) -> OnlineMatchResult | None:
+        if not self._window_results_buffer:
             return None
 
-        # Se só tem uma linha ou não devemos dissolver, retorna o merge simples
-        if len(lines) == 1:
-            return lines[0]
+        current = self._window_results_buffer[0]
 
-        if not dissolve:
-            # Apenas une as linhas sem processar o overlap inteligente
-            # (Nota: linemerge pode falhar se não tocarem, então fallback para união)
-            try:
-                return cast(LineString, linemerge(lines))
-            except:
-                # Fallback: cria uma multilinestring ou une coordenadas brutas
-                all_coords = []
-                for line in lines:
-                    all_coords.extend(list(line.coords))
-                return LineString(all_coords)
+        if len(self._window_results_buffer) > 1:
+            future = self._window_results_buffer[1]
 
-        # --- ALGORITMO DE COSTURA ITERATIVA ---
+            # --- STITCHING GEOMÉTRICO OTIMIZADO ---
+            # Converte para numpy array (N, 2) -> [[lat, lon], ...]
+            # Usando numpy desde o início para evitar conversões repetidas
+            pts_a_np = self._to_numpy(current.matched_points)
+            pts_b_np = self._to_numpy(future.matched_points)
 
-        # Começamos com a primeira geometria consolidada
-        merged_line = lines[0]
+            final_geom_np = self._stitch_geometry_numpy(pts_a_np, pts_b_np)
 
-        # Iteramos pelas próximas janelas tentando costurar uma a uma
-        for next_line in lines[1:]:
-            merged_line = self._stitch_two_geometries(merged_line, next_line)
+            # --- STITCHING TOPOLÓGICO ---
+            final_edges = self._stitch_edges(current.edge_ids, future.edge_ids)
 
-        return merged_line
+            # Reconverte numpy -> Coordinate objects para o output
+            final_geom_objs = [Coordinate(lon=p[1], lat=p[0]) for p in final_geom_np]
 
-    def _stitch_two_geometries(
-        self, geom_a: LineString, geom_b: LineString
-    ) -> LineString:
+            self._result.matched_points.extend(final_geom_objs)
+
+            # Merge inteligente de edges
+            if (
+                self._result.edge_ids
+                and final_edges
+                and self._result.edge_ids[-1] == final_edges[0]
+            ):
+                self._result.edge_ids.extend(final_edges[1:])
+            else:
+                self._result.edge_ids.extend(final_edges)
+
+        else:
+            # Janela final (sem lookahead)
+            coords = [
+                Coordinate(lon=lon, lat=lat) for lat, lon in current.matched_points
+            ]
+            self._result.matched_points.extend(coords)
+            self._result.edge_ids.extend(current.edge_ids)
+
+        self._window_results_buffer.popleft()
+        return copy.deepcopy(self._result)
+
+    # --- MATH & GEOMETRY (NUMPY + GEOPY) ---
+
+    def _to_numpy[T](self, points: list[Coordinate]) -> Float64NDArray:
+        """Converte lista de (lat, lon) para array numpy float64."""
+        if not points:
+            return np.empty((0, 2), dtype=np.float64)
+        return np.array(points, dtype=np.float64)
+
+    def _stitch_geometry_numpy(
+        self, pts_a: Float64NDArray, pts_b: Float64NDArray
+    ) -> Float64NDArray:
         """
-        Encontra o ponto de corte em geom_a onde geom_b começa e funde as duas.
+        Versão vetorizada do Stitching Geométrico.
+        pts_a, pts_b: Arrays (N, 2) formato [[lat, lon], ...]
         """
-        # Constantes do Algoritmo (podem virar atributos da classe)
+        if pts_a.size == 0:
+            return pts_b
+        if pts_b.size == 0:
+            return pts_a
+
         SAMPLE_STEP = 5.0  # metros
         TEST_LENGTH = 20.0  # metros
         RMSE_THRESHOLD = 15.0  # metros
 
-        if geom_a.is_empty:
-            return geom_b
-        if geom_b.is_empty:
-            return geom_a
+        # 1. Assinatura de B (usando Geopy para precisão de distância no resampling)
+        sig_b = self._resample_numpy(pts_b, SAMPLE_STEP, TEST_LENGTH)
 
-        # 1. Cria a assinatura do INÍCIO da nova geometria (B)
-        # Reamostra os primeiros 20 metros de B
-        signature_b = self._resample_shapely(geom_b, SAMPLE_STEP, TEST_LENGTH)
-
-        if not signature_b:
-            # B é muito curta ou inválida, apenas anexa
-            coords = list(geom_a.coords) + list(geom_b.coords)
-            return LineString(coords)
-
-        coords_a = list(geom_a.coords)
-        len_a = len(coords_a)
-
-        # 2. Busca essa assinatura no FINAL da geometria atual (A)
-        # Varre os últimos 40% dos vértices de A como candidatos a corte
-        start_search_idx = int(len_a * 0.6)
-
-        best_cut_index = -1
+        best_cut_idx = len(pts_a)
         min_rmse = float("inf")
 
-        # Itera de trás para frente para achar o maior overlap possível (Greedy)
-        for i in range(len_a - 1, start_search_idx, -1):
+        # 2. Varredura Otimizada
+        # Só procura nos últimos 50% de A para ganhar performance
+        start_search = int(len(pts_a) * 0.5)
 
-            # Constrói o segmento candidato (de i até o fim de A)
-            # Precisamos converter para LineString para usar métodos de geometria
-            candidate_coords = coords_a[i:]
-            if len(candidate_coords) < 2:
+        for i in range(start_search, len(pts_a)):
+            # Slice numpy (visão, sem cópia profunda imediata)
+            segment_a = pts_a[i:]
+
+            # Se o segmento for muito curto, ignora (evita erro de dimensão)
+            # Estimativa rápida: 1 grau ~= 111km. 20m ~= 0.00018 graus.
+            if len(segment_a) < 2:
                 continue
 
-            candidate_line = LineString(candidate_coords)
+            # Reamostra candidato
+            sig_a = self._resample_numpy(segment_a, SAMPLE_STEP, TEST_LENGTH)
 
-            # Se o candidato for muito mais curto que a assinatura,
-            # o RMSE vai falhar ou ser impreciso.
-            if candidate_line.length < (TEST_LENGTH * 0.5):
-                continue
+            # RMSE Vetorizado
+            rmse = self._calc_rmse_vectorized(sig_a, sig_b)
 
-            # Reamostra o candidato de A
-            signature_a = self._resample_shapely(
-                candidate_line, SAMPLE_STEP, TEST_LENGTH
-            )
+            if rmse < min_rmse:
+                min_rmse = rmse
+                best_cut_idx = i
 
-            # Calcula o erro
-            current_rmse = self._calculate_rmse_shapely(signature_a, signature_b)
-
-            if current_rmse < min_rmse:
-                min_rmse = current_rmse
-                best_cut_index = i
-
-        # 3. Aplica a Costura
-        if min_rmse < RMSE_THRESHOLD and best_cut_index != -1:
-            # SUCESSO: Cortamos A no índice encontrado e colamos B inteiro
-            # coords_a[:best_cut_index+1] inclui o ponto de solda
-            # coords_b[1:] evita duplicar o ponto se eles forem idênticos no espaço
-
-            final_coords_a = coords_a[: best_cut_index + 1]
-            final_coords_b = list(geom_b.coords)
-
-            # Pequena verificação para não duplicar vértice exato
-            if self._dist_sq(final_coords_a[-1], final_coords_b[0]) < 1e-6:
-                final_coords = final_coords_a + final_coords_b[1:]
-            else:
-                final_coords = final_coords_a + final_coords_b
-
-            return LineString(final_coords)
-
+        # 3. Decisão
+        if min_rmse < RMSE_THRESHOLD:
+            # Concatena A[:corte] + B
+            # vstack é eficiente para juntar arrays
+            return np.vstack((pts_a[:best_cut_idx], pts_b))
         else:
-            # FALHA: Não convergiu. Retorna A + B (Gap Filling / Linha reta)
-            return LineString(coords_a + list(geom_b.coords))
+            # Fallback
+            return np.vstack((pts_a, pts_b))
 
-    def _resample_shapely(
-        self, line: LineString, step: float, max_len: float
-    ) -> list[Point]:
-        """Gera pontos interpolados ao longo da LineString."""
-        points = []
-        current_dist = 0.0
-        total_length = line.length
-        limit = min(total_length, max_len)
+    def _resample_numpy(
+        self, points: Float64NDArray, step_m: float, max_len_m: float
+    ) -> Float64NDArray:
+        """
+        Reamostragem vetorizada.
+        Usa Geopy para calcular o comprimento total real dos segmentos,
+        mas usa interpolação linear vetorial (Numpy) para criar os pontos.
+        """
+        if len(points) < 2:
+            return points
 
-        while current_dist <= limit:
-            points.append(line.interpolate(current_dist))
-            current_dist += step
+        # Calcula distâncias entre pontos consecutivos
+        # Infelizmente Geopy é escalar, então iteramos para montar o array de distâncias reais.
+        # Para vetores pequenos (<100 pts) isso é rápido o suficiente.
+        # Otimização: Se performance for crítica, usar Haversine numpy aqui, mas Geopy é mais preciso (elipsoide).
 
-        return points
+        # Opção Híbrida: Iterar calculando dists com Geopy
+        dists = np.zeros(len(points) - 1)
+        for i in range(len(points) - 1):
+            # geodesic((lat1, lon1), (lat2, lon2)).meters
+            dists[i] = geodesic(points[i], points[i + 1]).meters
 
-    def _calculate_rmse_shapely(self, pts_a: list[Point], pts_b: list[Point]) -> float:
-        """Calcula RMSE entre duas listas de Pontos Shapely."""
+        # Distâncias acumuladas: [0, d1, d1+d2, ...]
+        cum_dist = np.concatenate(([0], np.cumsum(dists)))
+
+        # Define os alvos: [0, 5, 10, 15, 20] (limitado ao tamanho real da linha ou max_len)
+        limit = min(cum_dist[-1], max_len_m)
+        target_dists = np.arange(
+            0, limit + 0.001, step_m
+        )  # +0.001 para incluir borda se exato
+
+        if len(target_dists) == 0:
+            return points[:1]
+
+        # np.searchsorted encontra onde cada target_dist se encaixa no array cum_dist
+        # Retorna índices tal que: cum_dist[idx-1] <= target < cum_dist[idx]
+        indices = np.searchsorted(cum_dist, target_dists) - 1
+
+        # Clip para evitar index out of bounds no último ponto
+        indices = np.clip(indices, 0, len(points) - 2)
+
+        # Vetorização da interpolação
+        # P1 = pontos[indices], P2 = pontos[indices+1]
+        p1 = points[indices]
+        p2 = points[indices + 1]
+
+        dist_start = cum_dist[indices]
+        dist_end = cum_dist[indices + 1]
+        segment_lengths = dist_end - dist_start
+
+        # Evita divisão por zero
+        segment_lengths[segment_lengths == 0] = 1.0
+
+        fractions = (target_dists - dist_start) / segment_lengths
+        fractions = fractions[
+            :, np.newaxis
+        ]  # Transforma em coluna para multiplicar (N, 1)
+
+        # Fórmula: P_new = P1 + (P2 - P1) * fraction
+        interpolated = p1 + (p2 - p1) * fractions
+
+        return interpolated
+
+    def _calc_rmse_vectorized(self, pts_a: np.ndarray, pts_b: np.ndarray) -> float:
+        """Calcula RMSE usando Haversine totalmente vetorizado no Numpy."""
         n = min(len(pts_a), len(pts_b))
         if n < 2:
             return float("inf")
 
-        coords_a = np.array([(p.x, p.y) for p in pts_a[:n]])
-        coords_b = np.array([(p.x, p.y) for p in pts_b[:n]])
-        
-        sum_sq = np.sum((coords_a - coords_b) ** 2)
+        # Corta para o mesmo tamanho
+        a = pts_a[:n]
+        b = pts_b[:n]
 
-        return np.sqrt(sum_sq / n)
+        # Calcula distâncias ao quadrado
+        dists_sq = self._haversine_vectorized_sq(a[:, 0], a[:, 1], b[:, 0], b[:, 1])
 
-    def _dist_sq(self, c1, c2):
-        """Distância quadrática simples entre tuplas de coords (x, y)"""
-        dx = c1[0] - c2[0]
-        dy = c1[1] - c2[1]
-        return dx * dx + dy * dy
+        return np.sqrt(np.mean(dists_sq))
 
-    def _resolve_edge_stitch(self, edges: list[list[str]]) -> list[str] | None:
-        if not edges:
-            return None
-
-        final_edges = edges[0].copy()
-
-        for edge_list in edges[1:]:
-            cut_index = self._resolve_edge_overlap(final_edges, edge_list)
-            final_edges.extend(edge_list[cut_index:])
-
-        return final_edges
-
-    @staticmethod
-    def _resolve_edge_overlap(edges_a: list[str], edges_b: list[str]) -> int:
+    def _haversine_vectorized_sq(self, lat1, lon1, lat2, lon2):
         """
-        Finds where A ends for B to begin based on Edge IDs.
+        Implementação Numpy do Haversine (retorna Distância^2 para economizar um sqrt antes da média).
+        Input: Arrays numpy de latitudes e longitudes.
+        Output: Array de (metros^2).
         """
+        R = 6371000.0  # Raio da terra em metros
+
+        phi1, phi2 = np.radians(lat1), np.radians(lat2)
+        dphi = np.radians(lat2 - lat1)
+        dlambda = np.radians(lon2 - lon1)
+
+        a = (
+            np.sin(dphi / 2) ** 2
+            + np.cos(phi1) * np.cos(phi2) * np.sin(dlambda / 2) ** 2
+        )
+
+        # Distância exata: c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+        # Para pequenas distâncias, 2*asin(sqrt(a)) é seguro.
+        c = 2 * np.arcsin(np.sqrt(a))
+
+        d = R * c
+        return d**2
+
+    # --- EDGES (Mantido Lógica Python pura pois são Strings/Ints) ---
+
+    def _stitch_edges(self, edges_a: list[str], edges_b: list[str]) -> list[str]:
         if not edges_b:
-            return len(edges_a)
+            return edges_a
 
-        # Look for the longest suffix of A that matches a prefix of B
-        # Optimization: start search from the second half of A
+        # Procura overlap de trás pra frente
         start_search = len(edges_a) // 2
 
-        for i in reversed(range(start_search, len(edges_a))):
+        for i in range(len(edges_a) - 1, start_search - 1, -1):
             if edges_a[i] == edges_b[0]:
-                # Potential overlap found
                 overlap_len = len(edges_a) - i
                 if edges_a[i:] == edges_b[:overlap_len]:
-                    return i  # Cut A here
+                    # Retorna A cortado + B inteiro
+                    return edges_a[:i] + edges_b
 
-        return len(edges_a)  # No overlap found
+        return edges_a + edges_b
 
 
 @factory(FixedSlidingWindowMatcher)
