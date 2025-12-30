@@ -65,11 +65,20 @@ class GraphHopperMatcher(BaseMatcher):
 
         req.raise_for_status()
 
-        res = json.loads(req.content)["paths"][0]
+        res = json.loads(req.content)
+        paths = res.get("paths")
+        if not paths or len(paths) == 0:
+            raise RuntimeError("No paths returned from GraphHopper matcher.")
+
+        path = paths[0]
+        points = path.get("points", [])
+        
+        details = path.get("details", {})
+        edge_ids = details.get("osm_way_id", [])
 
         return {
-            "points": res["points"],
-            "edge_ids": res["details"]["osm_way_id"],
+            "points": points,
+            "edge_ids": edge_ids,
         }
 
 
