@@ -1,105 +1,132 @@
 import asyncio
-import copy
 import math
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
-from typing import AsyncIterable, AsyncIterator, Final, Optional, override
+from typing import AsyncIterable, AsyncIterator, Final, override
 
 from mmlib.matcher.base import BaseMatcher, BaseOnlineMatcher
 from mmlib.result.offline import MatchResult
 from mmlib.result.online import OnlineMatchResult
-from mmlib.types.points import GPSPoint
+from mmlib.types.points import Coordinate, GPSPoint
 from mmlib.utils import factory
 
+# --- CONFIGURAÇÕES DO ALGORITMO ---
+PASSO_AMOSTRAGEM_METROS = 5.0
+COMPRIMENTO_TESTE_METROS = 20.0
+LIMIAR_RMSE_METROS = 15.0
+RAIO_TERRA_KM = 6371.0
 
-@dataclass(frozen=True)
-class WindowResult:
-    """Resultado da caixa-preta para uma janela."""
-    edges: list
-    points: list  # polyline: list[[lat, lon] or GPSPoint-like]
-
-
-@dataclass(frozen=True)
-class EdgeOverlap:
-    valid: bool
-    cut_idx_in_A: int          # A.edges[:cut_idx_in_A] é o que commitamos
-    overlap_len: int = 0
+# --- FUNÇÕES AUXILIARES DE GEOMETRIA (MATH HELPERS) ---
 
 
-@dataclass(frozen=True)
-class GeoOverlap:
-    valid: bool
-    cut_dist_in_A: float       # metros desde o início de A.points
-    start_dist_in_B: float     # metros desde o início de B.points
-    rmse: float = math.inf
-    overlap_dist: float = 0.0
+def haversine_distance(p1: Coordinate, p2: Coordinate) -> float:
+    """Calcula distância em metros entre dois pontos GPS."""
+    d_lat = math.radians(p2.lat - p1.lat)
+    d_lon = math.radians(p2.lon - p1.lon)
+    lat1 = math.radians(p1.lat)
+    lat2 = math.radians(p2.lat)
+
+    a = (
+        math.sin(d_lat / 2) ** 2
+        + math.cos(lat1) * math.cos(lat2) * math.sin(d_lon / 2) ** 2
+    )
+    c = 2 * math.asin(math.sqrt(a))
+    return RAIO_TERRA_KM * c * 1000.0
+
+
+def interpolate_point(p1: Coordinate, p2: Coordinate, fraction: float) -> Coordinate:
+    """Interpolação linear simples entre Lat/Lon."""
+    new_lat = p1.lat + (p2.lat - p1.lat) * fraction
+    new_lon = p1.lon + (p2.lon - p1.lon) * fraction
+    # Assumindo que GPSPoint pode ser instanciado assim ou tem um construtor compatível
+    # Se GPSPoint for imutável/dataclass, ajuste conforme necessário.
+    # Aqui vamos assumir uma cópia com novos valores:
+    return Coordinate(lat=new_lat, lon=new_lon)
+
+
+def resample_polyline(
+    points: list[Coordinate], step: float, max_len: float
+) -> list[Coordinate]:
+    """Reamostra a polilinha a cada 'step' metros até atingir 'max_len'."""
+    if not points:
+        return []
+
+    resampled = [points[0]]
+    current_dist_acc = 0.0
+    target_dist = step
+
+    for i in range(len(points) - 1):
+        p1, p2 = points[i], points[i + 1]
+        seg_len = haversine_distance(p1, p2)
+
+        while target_dist <= current_dist_acc + seg_len:
+            if target_dist > max_len:
+                return resampled
+
+            fraction = (target_dist - current_dist_acc) / seg_len if seg_len > 0 else 0
+            new_p = interpolate_point(p1, p2, fraction)
+            resampled.append(new_p)
+            target_dist += step
+
+        current_dist_acc += seg_len
+        if current_dist_acc >= max_len:
+            break
+
+    return resampled
+
+
+def calculate_rmse(pts_a: list[Coordinate], pts_b: list[Coordinate]) -> float:
+    """Calcula Root Mean Square Error entre duas listas de pontos."""
+    n = min(len(pts_a), len(pts_b))
+    if n < 2:
+        return float("inf")
+
+    sum_sq = sum(haversine_distance(pts_a[i], pts_b[i]) ** 2 for i in range(n))
+    return math.sqrt(sum_sq / n)
+
+
+# --- CLASSE PRINCIPAL ---
 
 
 class FixedSlidingWindowMatcher(BaseOnlineMatcher):
     """
-    Online wrapper de um matcher offline (caixa-preta), usando:
-      - FSW: janelas fixas com overlap na requisição
-      - Look-ahead: espera N janelas futuras para decidir costura
-      - Dual Overlap: edge_ids e geometria têm costura independente
+    Online matcher using Fixed Sliding Window (FSW) with Look-Ahead Stitching.
+    Implementa Dual Stitching: Topológico (Edges) e Geométrico (Resampling + RMSE).
     """
 
-    _base_matcher_name: Final[str] = "FSW"
+    _base_matcher_name: Final[str] = "fsw_robust"
 
     def __init__(
         self,
         matcher: BaseMatcher,
         *,
-        window_size: int = 100,          # TAM_JANELA (em número de pontos do stream)
-        request_overlap: int = 20,       # TAM_OVERLAP_REQ (em número de pontos do stream)
-        lookahead: int = 2,              # N_LOOKAHEAD
-        min_points_to_match: int = 10,   # evita chamar caixa-preta com janela pequena
-        max_workers: int = 1,
-        # Geometria
-        sample_step_m: float = 5.0,
-        rmse_max_m: float = 15.0,
-        geo_overlap_min_m: float = 40.0,
-        geo_overlap_max_m: float = 300.0,
-        rmse_shift_k: int = 3,
-        # Edges
-        min_overlap_edges: int = 3,
+        window_size: int = 100,
+        overlap_size: int = 20,
+        lookahead: int = 1,
     ) -> None:
         super().__init__()
-        if window_size <= 0:
-            raise ValueError("window_size must be > 0")
-        if request_overlap < 0 or request_overlap >= window_size:
-            raise ValueError("request_overlap must be in [0, window_size-1]")
-        if lookahead < 0:
-            raise ValueError("lookahead must be >= 0")
+        if window_size <= 0 or overlap_size >= window_size:
+            raise ValueError("Invalid window/overlap configuration.")
 
         self._matcher = matcher
         self._window_size = window_size
-        self._request_overlap = request_overlap
-        self._stride = window_size - request_overlap
+        self._overlap_size = overlap_size
         self._lookahead = lookahead
-        self._min_points_to_match = min_points_to_match
 
-        self._sample_step_m = sample_step_m
-        self._rmse_max_m = rmse_max_m
-        self._geo_overlap_min_m = geo_overlap_min_m
-        self._geo_overlap_max_m = geo_overlap_max_m
-        self._rmse_shift_k = rmse_shift_k
-        self._min_overlap_edges = min_overlap_edges
+        # Buffer de entrada (Raw Points) para formar janelas com overlap
+        self._raw_buffer: list[GPSPoint] = []
 
-        self._executor = ThreadPoolExecutor(max_workers=max_workers)
+        # Buffer de saídas (Resultados do Match) para decisão Look-Ahead
+        self._window_results_buffer: deque[MatchResult] = deque()
 
-        # buffers
-        self._raw_buffer: list[GPSPoint] = []      # pontos brutos acumulados do stream
-        self._results_buffer: deque[WindowResult] = deque()  # janelas matchadas pendentes
-
-        # saída consolidada
-        self._out_edges: list = []
-        self._out_points: list = []
-
-        # Result stream
+        # Resultado acumulado
         self._result = OnlineMatchResult(matcher_name=self.matcher_name)
 
+        # Executor para rodar o matcher offline sem bloquear o loop
+        self._executor: ThreadPoolExecutor | None = None
+
     @property
+    @override
     def matcher_name(self) -> str:
         return f"{self._base_matcher_name}({self._matcher.matcher_name})"
 
@@ -107,389 +134,181 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
     async def start(self) -> None:
         if not self._started:
             self._started = True
-            # recria executor (se stop() foi chamado)
-            if getattr(self, "_executor", None) is None:
-                self._executor = ThreadPoolExecutor(max_workers=1)
+            self._executor = ThreadPoolExecutor(max_workers=1)
 
     @override
     async def stop(self) -> None:
-        if self._started:
+        if self._started and self._executor:
             self._executor.shutdown(wait=True)
+            self._executor = None
             self._started = False
 
-    # ----------------------------
-    # API principal
-    # ----------------------------
     @override
     async def match_stream(
         self, points: AsyncIterable[GPSPoint]
     ) -> AsyncIterator[OnlineMatchResult]:
         await self.start()
 
-        async for p in points:
-            self._raw_buffer.append(p)
+        async for point in points:
+            # 1. Acumula pontos brutos e atualiza o 'sent' (rastreamento de entrada)
+            self._raw_buffer.append(point)
+            self._result._update_sent(point)  # Método interno para rastrear input
 
-            # tenta produzir novas janelas matchadas sempre que tiver window_size
-            await self._fill_results_buffer_if_possible()
+            # 2. Se encheu a janela, dispara o match offline
+            if len(self._raw_buffer) >= self._window_size:
+                await self._process_current_raw_batch()
 
-            # tenta consolidar enquanto tiver lookahead suficiente
-            while self._can_decide_stitch():
-                self._stitch_one_step()
+            # 3. Se temos janelas suficientes no buffer de resultados, tentamos costurar (Stitch)
+            while len(self._window_results_buffer) > self._lookahead:
+                yield await self._stitch_and_emit()
 
-                # atualiza objeto OnlineMatchResult (stream)
-                self._result.edge_ids = list(self._out_edges)
-                # mantém a convenção antiga (matched_points), mas aqui vira polyline consolidada
-                self._result.matched_points = list(self._out_points)
+        # 4. Flush: processa o que sobrou no raw buffer
+        if len(self._raw_buffer) > 0:
+            await self._process_current_raw_batch()
 
-                yield copy.deepcopy(self._result)
+        # 5. Flush: emite o restante dos resultados pendentes
+        while len(self._window_results_buffer) > 0:
+            yield await self._emit_remaining()
 
-        # flush final: processa o que sobrou
-        await self._flush_remaining()
-
-        self._result.edge_ids = list(self._out_edges)
-        self._result.matched_points = list(self._out_points)
-        yield copy.deepcopy(self._result)
-
-    # ----------------------------
-    # Janela -> caixa-preta
-    # ----------------------------
-    async def _fill_results_buffer_if_possible(self) -> None:
-        """
-        Enquanto tiver dados suficientes em _raw_buffer para formar uma janela,
-        roda o matcher offline e enfileira WindowResult.
-        """
-        while len(self._raw_buffer) >= self._window_size:
-            window_points = self._raw_buffer[: self._window_size]
-
-            if len(window_points) < self._min_points_to_match:
-                return
-
-            loop = asyncio.get_running_loop()
-            match_result: MatchResult = await loop.run_in_executor(
-                self._executor, self._matcher.match, list(window_points)
-            )
-
-            wr = WindowResult(
-                edges=list(match_result.edge_ids),
-                points=list(match_result.matched_points),
-            )
-            self._results_buffer.append(wr)
-
-            # avança no stream bruto pelo stride (mantém overlap no bruto)
-            del self._raw_buffer[: self._stride]
-
-    def _can_decide_stitch(self) -> bool:
-        # Precisamos de pelo menos 2 janelas para costurar
-        if len(self._results_buffer) <= 1:
-            return False
-        # Look-ahead N significa: decidir com A e até N futuras disponíveis (se possível)
-        # Aqui basta ter 2; o algoritmo tenta até min(lookahead, n-1)
-        return True
-
-    async def _flush_remaining(self) -> None:
-        """
-        No final do stream, pode sobrar:
-        - dados brutos insuficientes pra formar janela cheia
-        - resultados em buffer sem futuras
-        Estratégia: roda uma última janela com o que tiver (se passar do mínimo)
-        e depois “anexa sem costura” tudo o que sobrar.
-        """
-        # tenta rodar uma última janela parcial
-        if len(self._raw_buffer) >= self._min_points_to_match:
-            loop = asyncio.get_running_loop()
-            match_result: MatchResult = await loop.run_in_executor(
-                self._executor, self._matcher.match, list(self._raw_buffer)
-            )
-            self._results_buffer.append(
-                WindowResult(edges=list(match_result.edge_ids), points=list(match_result.matched_points))
-            )
-            self._raw_buffer.clear()
-
-        # agora consolida tudo que sobrar do buffer, preferindo costuras quando possível
-        while len(self._results_buffer) >= 2:
-            self._stitch_one_step()
-
-        # anexa a última janela restante (se existir)
-        if self._results_buffer:
-            last = self._results_buffer.popleft()
-            self._append_whole_window(last)
-
-    # ----------------------------
-    # Dual Overlap stitching
-    # ----------------------------
-    def _stitch_one_step(self) -> None:
-        """
-        Decide costura da janela alvo (A = buffer[0]) com alguma futura (k=1..lookahead).
-        Se achar, comita prefixos (edges e geom com cortes independentes) e avança buffer.
-        Se não achar, faz fallback conservador.
-        """
-        A = self._results_buffer[0]
-
-        best_k: Optional[int] = None
-        best_e: Optional[EdgeOverlap] = None
-        best_g: Optional[GeoOverlap] = None
-
-        max_k = min(self._lookahead, len(self._results_buffer) - 1)
-        # first-fit robusto (preferir k=1)
-        for k in range(1, max_k + 1):
-            B = self._results_buffer[k]
-
-            e = self._overlap_edges_suffix_prefix(A.edges, B.edges)
-            if not e.valid:
-                continue
-
-            g = self._overlap_geom_resampling(A.points, B.points)
-            if not g.valid:
-                continue
-
-            best_k, best_e, best_g = k, e, g
-            break
-
-        if best_k is not None and best_e and best_g:
-            # 1) commit edges (topologia)
-            self._out_edges.extend(A.edges[: best_e.cut_idx_in_A])
-
-            # 2) commit points (geometria por distância)
-            prefixA = self._extract_prefix_by_distance(A.points, best_g.cut_dist_in_A)
-            self._out_points = self._concat_polyline(self._out_points, prefixA)
-
-            # 3) cortar prefixo redundante de B.points (evitar duplicar)
-            B = self._results_buffer[best_k]
-            B_points_adj = self._extract_suffix_by_distance(
-                B.points, self._polyline_length(B.points) - best_g.start_dist_in_B
-            )
-            # atualiza o objeto B no buffer
-            self._results_buffer[best_k] = WindowResult(edges=B.edges, points=B_points_adj)
-
-            # 4) avançar: remove A e janelas intermediárias (mantém sua heurística)
-            for _ in range(best_k):
-                self._results_buffer.popleft()
-        else:
-            # fallback conservador: commit só uma fração segura do começo
-            self._fallback_commit_min(A)
-            self._results_buffer.popleft()
-
-    def _append_whole_window(self, w: WindowResult) -> None:
-        # edges: adiciona tudo, removendo duplicata simples de fronteira
-        self._out_edges = self._concat_edges_no_dup(self._out_edges, w.edges)
-        # pontos: concatena sem duplicar o ponto inicial se colado
-        self._out_points = self._concat_polyline(self._out_points, w.points)
-
-    def _fallback_commit_min(self, A: WindowResult) -> None:
-        """
-        Fallback seguro quando não há costura.
-        Evita 'commit tudo' (que pode cristalizar erro).
-        Estratégia simples: commit 30% inicial de edges e 30% inicial da geometria (por distância).
-        """
-        if not A.edges and not A.points:
+    async def _process_current_raw_batch(self):
+        """Envia o batch atual para o matcher offline e gerencia o overlap da próxima entrada."""
+        if not self._executor:
             return
 
-        # edges
-        if A.edges:
-            cut_e = max(1, int(len(A.edges) * 0.3))
-            self._out_edges.extend(A.edges[:cut_e])
+        # Snapshot para a thread
+        batch_snapshot = list(self._raw_buffer)
 
-        # geom (por distância)
-        if A.points:
-            total = self._polyline_length(A.points)
-            cut_d = max(self._geo_overlap_min_m, total * 0.3)
-            prefix = self._extract_prefix_by_distance(A.points, cut_d)
-            self._out_points = self._concat_polyline(self._out_points, prefix)
+        # Executa Match Offline (Bloqueante) em outra thread
+        loop = asyncio.get_running_loop()
+        match_result = await loop.run_in_executor(
+            self._executor, self._matcher.match, batch_snapshot
+        )
 
-    # ----------------------------
-    # Overlap edges (discreto)
-    # ----------------------------
-    def _overlap_edges_suffix_prefix(self, A: list, B: list) -> EdgeOverlap:
-        if not A or not B:
-            return EdgeOverlap(valid=False, cut_idx_in_A=len(A))
+        self._window_results_buffer.append(match_result)
 
-        Lmax = min(len(A), len(B))
-        for L in range(Lmax, self._min_overlap_edges - 1, -1):
-            if A[len(A) - L : len(A)] == B[0:L]:
-                return EdgeOverlap(valid=True, cut_idx_in_A=len(A) - L, overlap_len=L)
-        return EdgeOverlap(valid=False, cut_idx_in_A=len(A))
+        # Prepara o raw_buffer para a próxima: Mantém os últimos 'overlap_size' pontos
+        # para garantir que a próxima janela tenha contexto físico com esta.
+        if self._overlap_size > 0:
+            self._raw_buffer = self._raw_buffer[-self._overlap_size :]
+        else:
+            self._raw_buffer = []
 
-    # ----------------------------
-    # Overlap geom (independente; por distância + reamostragem + RMSE)
-    # ----------------------------
-    def _overlap_geom_resampling(self, polyA: list, polyB: list) -> GeoOverlap:
-        if len(polyA) < 2 or len(polyB) < 2:
-            return GeoOverlap(valid=False, cut_dist_in_A=0.0, start_dist_in_B=0.0)
+    async def _stitch_and_emit(self) -> OnlineMatchResult:
+        """Tenta costurar a janela atual (0) com a futura (1) e emite o resultado."""
 
-        A = self._resample_by_arc(polyA, self._sample_step_m)
-        B = self._resample_by_arc(polyB, self._sample_step_m)
+        current_res = self._window_results_buffer[0]
+        future_res = self._window_results_buffer[1]  # Lookahead=1 simples
 
-        best = GeoOverlap(valid=False, cut_dist_in_A=0.0, start_dist_in_B=0.0)
+        # --- 1. Overlap Topológico (Edges) ---
+        edges_cut_idx = self._resolve_edge_overlap(
+            current_res.edge_ids, future_res.edge_ids
+        )
+        final_edges = current_res.edge_ids[:edges_cut_idx]
 
-        # testa D do maior pro menor (preferir overlap longo)
-        D = self._geo_overlap_max_m
-        while D >= self._geo_overlap_min_m:
-            n = int(D / self._sample_step_m)
-            if n >= 5 and n <= len(A) and n <= len(B):
-                sufA = A[len(A) - n :]
-                preB = B[:n]
-                rmse, shift = self._rmse_shift(sufA, preB, self._rmse_shift_k)
+        # --- 2. Overlap Geométrico (Pontos) ---
+        geom_cut_idx = self._resolve_geometry_overlap(
+            current_res.matched_points, future_res.matched_points
+        )
+        final_points = current_res.matched_points[:geom_cut_idx]
 
-                if rmse < self._rmse_max_m:
-                    cutA = max(0.0, self._polyline_length(polyA) - D)
-                    startB = float(shift) * self._sample_step_m
-                    best = GeoOverlap(
-                        valid=True,
-                        cut_dist_in_A=cutA,
-                        start_dist_in_B=startB,
-                        rmse=rmse,
-                        overlap_dist=D,
-                    )
-                    return best  # first-fit por D decrescente
-            D -= 2.0 * self._sample_step_m
+        # --- 3. Atualiza Estado e Emite ---
+        self._append_to_result(final_edges, final_points)
 
-        return best
+        # Remove a janela processada. A 'future' vira a nova 'current'.
+        self._window_results_buffer.popleft()
 
-    # ----------------------------
-    # Geometria utilitária (sem 1:1)
-    # ----------------------------
-    def _rmse_shift(self, X: list, Y: list, K: int) -> tuple[float, int]:
-        best_rmse = math.inf
-        best_shift = 0
-        for s in range(0, K + 1):
-            n = min(len(X), len(Y) - s)
-            if n < 5:
-                continue
-            acc = 0.0
-            for i in range(n):
-                d = self._dist_m(X[i], Y[i + s])
-                acc += d * d
-            rmse = math.sqrt(acc / n)
-            if rmse < best_rmse:
-                best_rmse = rmse
-                best_shift = s
-        return best_rmse, best_shift
+        # Retorna uma cópia do estado atual (snapshot)
+        return (
+            self._result
+        )  # Assumindo que o consumidor fará deepcopy se necessário, ou use copy.deepcopy(self._result)
 
-    def _resample_by_arc(self, poly: list, step_m: float) -> list:
-        if len(poly) < 2:
-            return list(poly)
+    async def _emit_remaining(self) -> OnlineMatchResult:
+        """Emite a janela restante sem costura (fim do stream)."""
+        res = self._window_results_buffer.popleft()
+        self._append_to_result(res.edge_ids, res.matched_points)
+        return self._result
 
-        out = [poly[0]]
-        dist_acc = 0.0
-        dist_target = 0.0
+    def _append_to_result(self, new_edges: list, new_points: list[Coordinate]):
+        """Adiciona dados ao resultado acumulado, evitando duplicatas simples nas bordas."""
 
-        for i in range(len(poly) - 1):
-            p1 = poly[i]
-            p2 = poly[i + 1]
-            seg = self._dist_m(p1, p2)
-            if seg <= 0:
-                continue
+        # Adiciona Edges (evitando duplicar o último se for igual ao primeiro do novo)
+        if (
+            self._result.edge_ids
+            and new_edges
+            and self._result.edge_ids[-1] == new_edges[0]
+        ):
+            self._result.edge_ids.extend(new_edges[1:])
+        else:
+            self._result.edge_ids.extend(new_edges)
 
-            while (dist_target + step_m) <= (dist_acc + seg):
-                dist_target += step_m
-                t = (dist_target - dist_acc) / seg
-                out.append(self._lerp(p1, p2, t))
+        # Adiciona Pontos (Geometria)
+        # Nota: Para geometria, geralmente apendamos tudo, ou verificamos dist < epsilon
+        self._result.matched_points.extend(new_points)
 
-            dist_acc += seg
+    # --- LÓGICA DE STITCHING ---
 
-        return out
+    def _resolve_edge_overlap(self, edges_a: list, edges_b: list) -> int:
+        """Encontra onde A termina para B começar (Baseado em IDs)."""
+        if not edges_b:
+            return len(edges_a)
 
-    def _extract_prefix_by_distance(self, poly: list, D: float) -> list:
-        if len(poly) < 2 or D <= 0:
-            return [poly[0]] if poly else []
+        # Procura o maior sufixo de A que é prefixo de B
+        # Otimização: busca apenas na segunda metade de A
+        start_search = len(edges_a) // 2
 
-        out = [poly[0]]
-        dist = 0.0
+        for i in range(len(edges_a) - 1, start_search - 1, -1):
+            if edges_a[i] == edges_b[0]:
+                # Candidato a overlap
+                overlap_len = len(edges_a) - i
+                # Verifica se o resto bate
+                if edges_a[i:] == edges_b[:overlap_len]:
+                    return i  # Corta A aqui
 
-        for i in range(len(poly) - 1):
-            p1 = poly[i]
-            p2 = poly[i + 1]
-            seg = self._dist_m(p1, p2)
-            if seg <= 0:
-                continue
+        return len(edges_a)  # Sem overlap, retorna tudo
 
-            if dist + seg <= D:
-                out.append(p2)
-                dist += seg
-            else:
-                falta = D - dist
-                t = max(0.0, min(1.0, falta / seg))
-                out.append(self._lerp(p1, p2, t))
-                return out
+    def _resolve_geometry_overlap(
+        self, geom_a: list[Coordinate], geom_b: list[Coordinate]
+    ) -> int:
+        """Encontra ponto de corte geométrico usando Reamostragem + RMSE."""
+        if not geom_b or not geom_a:
+            return len(geom_a)
 
-        return out
+        # 1. Cria assinatura do INÍCIO de B (ex: primeiros 20m normalizados)
+        sig_b = resample_polyline(
+            geom_b, PASSO_AMOSTRAGEM_METROS, COMPRIMENTO_TESTE_METROS
+        )
+        if not sig_b:
+            return len(geom_a)
 
-    def _extract_suffix_by_distance(self, poly: list, D: float) -> list:
-        # últimos D metros
-        if len(poly) < 2:
-            return list(poly)
-        rev = list(reversed(poly))
-        pref = self._extract_prefix_by_distance(rev, D)
-        return list(reversed(pref))
+        best_cut_idx = len(geom_a)
+        min_rmse = float("inf")
 
-    def _polyline_length(self, poly: list) -> float:
-        if len(poly) < 2:
-            return 0.0
-        total = 0.0
-        for i in range(len(poly) - 1):
-            total += self._dist_m(poly[i], poly[i + 1])
-        return total
+        # 2. Busca essa assinatura no FINAL de A
+        start_search = int(len(geom_a) * 0.6)
 
-    def _concat_polyline(self, base: list, seg: list, eps_m: float = 1.0) -> list:
-        if not base:
-            return list(seg)
-        if not seg:
-            return list(base)
-        if self._dist_m(base[-1], seg[0]) < eps_m:
-            return base + seg[1:]
-        return base + seg
+        for i in range(start_search, len(geom_a)):
+            # Tenta pegar um segmento em A começando em i
+            candidate_segment = geom_a[i:]
 
-    def _concat_edges_no_dup(self, base: list, seg: list) -> list:
-        if not base:
-            return list(seg)
-        if not seg:
-            return list(base)
-        # remove duplicata simples de fronteira
-        if base[-1] == seg[0]:
-            return base + seg[1:]
-        return base + seg
+            # Reamostra candidato A
+            sig_a = resample_polyline(
+                candidate_segment, PASSO_AMOSTRAGEM_METROS, COMPRIMENTO_TESTE_METROS
+            )
 
-    # ----------------------------
-    # Distância/interpolação
-    # ----------------------------
-    def _dist_m(self, a, b) -> float:
-        """
-        Distância em metros. Se GPSPoint tiver lat/lon, use haversine.
-        Aqui deixei genérico: espera a e b serem (lat,lon) ou GPSPoint com .lat/.lon.
-        """
-        lat1, lon1 = self._get_latlon(a)
-        lat2, lon2 = self._get_latlon(b)
+            # Compara RMSE
+            rmse = calculate_rmse(sig_a, sig_b)
 
-        # haversine
-        R = 6371000.0
-        phi1 = math.radians(lat1)
-        phi2 = math.radians(lat2)
-        dphi = math.radians(lat2 - lat1)
-        dl = math.radians(lon2 - lon1)
+            if rmse < min_rmse:
+                min_rmse = rmse
+                best_cut_idx = i
 
-        h = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dl / 2) ** 2
-        return 2 * R * math.asin(math.sqrt(h))
+        # 3. Validação
+        if min_rmse < LIMIAR_RMSE_METROS:
+            return best_cut_idx
 
-    def _lerp(self, a, b, t: float):
-        lat1, lon1 = self._get_latlon(a)
-        lat2, lon2 = self._get_latlon(b)
-        lat = lat1 + (lat2 - lat1) * t
-        lon = lon1 + (lon2 - lon1) * t
-        # retorna no mesmo “formato” de entrada (tuple lat/lon).
-        return (lat, lon)
-
-    def _get_latlon(self, p) -> tuple[float, float]:
-        # suporta tuple/list [lat,lon] ou GPSPoint com atributos comuns
-        if isinstance(p, (tuple, list)) and len(p) >= 2:
-            return float(p[0]), float(p[1])
-        # tenta atributos típicos
-        if hasattr(p, "lat") and hasattr(p, "lon"):
-            return float(p.lat), float(p.lon) # type: ignore
-        if hasattr(p, "latitude") and hasattr(p, "longitude"):
-            return float(p.latitude), float(p.longitude) # type: ignore
-        raise TypeError("Point must be (lat,lon) or have lat/lon attributes")
+        return len(geom_a)  # Falha na convergência, retorna tudo
 
 
 @factory(FixedSlidingWindowMatcher)
-def fsw_matcher(*args, **kwargs) -> BaseOnlineMatcher:
-    return FixedSlidingWindowMatcher(*args, **kwargs)
+def fsw_matcher(matcher: BaseMatcher) -> BaseOnlineMatcher:
+    return FixedSlidingWindowMatcher(matcher)
