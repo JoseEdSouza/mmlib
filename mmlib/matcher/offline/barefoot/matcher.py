@@ -28,6 +28,7 @@ class BarefootOfflineMatcher(BaseMatcher):
         *,
         vehicle_id: Optional[str] = None,
     ) -> None:
+        super().__init__()
         self._host = host
         self._port = port
         if vehicle_id is None:
@@ -62,9 +63,13 @@ class BarefootOfflineMatcher(BaseMatcher):
             edge_ids=edge_ids,
         )
 
+    @property
+    def matcher_name(self) -> str:
+        return self._matcher_name
+
     def _prepare_payload(self, points: list[GPSPoint]) -> str:
         samples: list[_Sample] = []
-        for i, pt in enumerate(points):
+        for pt in points:
             samples.append(
                 {
                     "id": self._vehicle_id,
@@ -111,7 +116,7 @@ class BarefootOfflineMatcher(BaseMatcher):
             return cast(_BarefootGeoJSONResponse, data)
         except json.JSONDecodeError as e:
             logger.error("Failed to decode Barefoot response: %s", output)
-            raise RuntimeError(f"Invalid JSON from Barefoot: {e}")
+            raise RuntimeError(f"Invalid JSON from Barefoot: {e}") from e
 
 
 @factory(BarefootOfflineMatcher)

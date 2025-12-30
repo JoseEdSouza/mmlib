@@ -1,5 +1,5 @@
 import json
-from typing import Any
+from typing import Any, Final
 
 import polyline
 import requests
@@ -12,10 +12,9 @@ from mmlib.utils import factory
 
 
 class GraphHopperMatcher(BaseMatcher):
-    _base_url: str
-    _gps_accuracy: int
-    _profile: str
-    _locale: str
+    """Offline matcher using GraphHopper Map Matching API."""
+    
+    _matcher_name: Final[str] = "graphhopper"
 
     def __init__(
         self,
@@ -28,6 +27,10 @@ class GraphHopperMatcher(BaseMatcher):
         self._gps_accuracy = gps_accuracy
         self._profile = profile
         self._locale = locale
+    
+    @property
+    def matcher_name(self) -> str:
+        return self._matcher_name
 
     def match(self, points: list[GPSPoint]) -> MatchResult:
         gpx_points = to_gpx(points)

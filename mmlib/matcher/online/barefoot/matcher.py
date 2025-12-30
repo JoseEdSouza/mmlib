@@ -2,7 +2,7 @@ import asyncio
 import copy
 import logging
 from collections.abc import AsyncIterable, AsyncIterator
-from typing import Final, Self, override
+from typing import Final, override
 
 from shapely import wkt
 
@@ -26,7 +26,7 @@ class BarefootOnlineMatcher(BaseOnlineMatcher):
     - Defensive correlation via (id, time) to avoid mixing vehicles/out-of-order/duplicates.
     """
 
-    _matcher_name: Final[str] = "barefoot"
+    _matcher_name: Final[str] = "barefoot_online"
 
     def __init__(
         self,
@@ -38,6 +38,7 @@ class BarefootOnlineMatcher(BaseOnlineMatcher):
         vehicle_id: str | None = None,
         drain_timeout: float = 5.0,
     ) -> None:
+        super().__init__()
         if vehicle_id is None:
             import uuid
 
@@ -54,20 +55,29 @@ class BarefootOnlineMatcher(BaseOnlineMatcher):
         self._last_sent_time_ms: float | None = None
         self._last_received_time_ms: int | None = None
 
-    @override
-    async def __aenter__(self) -> Self:
-        await self._comm.__aenter__()
-        return self
+    @property
+    def matcher_name(self) -> str:
+        return self._matcher_name
 
     @override
-    async def __aexit__(self, exc_type, exc, tb) -> None:
-        await self._comm.__aexit__(exc_type, exc, tb)
+    async def start(self) -> None:
+        if not self._started:
+            await self._comm.__aenter__()
+            self._started = True
+
+    @override
+    async def stop(self) -> None:
+        if self._started:
+            await self._comm.__aexit__(None, None, None)
+            self._started = False
 
     @override
     async def match_stream(
         self, points: AsyncIterable[GPSPoint]
     ) -> AsyncIterator[OnlineMatchResult]:
+        await self.start()
         sending_done = asyncio.Event()
+
         sender_task = asyncio.create_task(
             self._sender(points, sending_done), name="barefoot_sender"
         )
