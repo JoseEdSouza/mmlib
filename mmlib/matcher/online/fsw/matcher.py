@@ -107,23 +107,15 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         if not results_snapshot:
             return copy.deepcopy(self._result)
 
-        geometries = [LineString(res.matched_points) for res in results_snapshot]
+        geometries = [res.matched_points for res in results_snapshot]
 
         edges_ids = [res.edge_ids for res in results_snapshot]
 
         stitched_geometry = self._resolve_geometric_stitch(geometries)
         stitched_edges = self._resolve_edge_stitch(edges_ids)
 
-        stiched_points = (
-            [
-                Coordinate(lon=lon, lat=lat)
-                for (lon, lat) in list(stitched_geometry.coords)
-            ]
-            if stitched_geometry
-            else []
-        )
 
-        self._result.matched_points.extend(stiched_points)
+        self._result.matched_points.extend(stitched_geometry or [])
         self._result.edge_ids.extend(stitched_edges or [])
 
         return copy.deepcopy(self._result)
@@ -131,15 +123,15 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
     # --- STITCHING LOGIC ---
 
     def _resolve_geometric_stitch(
-        self, geometries: list[LineString]
-    ) -> LineString | None:
+        self, geometries: list[list[Coordinate]]
+    ) -> list[Coordinate] | None:
         if not geometries:
             return None
 
-        final = list(geometries[0].coords)
+        final = geometries[0].copy()
 
         for geom in geometries[1:]:
-            current = geom.coords
+            current = geom
 
             if len(final) == 0:
                 final.extend(current)
@@ -154,7 +146,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
                 if new_point != final[-1]:
                     final.append(new_point)
 
-        return LineString(final)
+        return final
 
     def _resolve_edge_stitch(self, edges: list[list[str]]) -> list[str] | None:
         if not edges:
