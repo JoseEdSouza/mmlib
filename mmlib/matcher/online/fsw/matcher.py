@@ -9,7 +9,7 @@ from typing import AsyncIterable, AsyncIterator, Final, Optional, override
 from mmlib.matcher.base import BaseMatcher, BaseOnlineMatcher
 from mmlib.result.offline import MatchResult
 from mmlib.result.online import OnlineMatchResult
-from mmlib.types.points import GPSPoint
+from mmlib.types.points import Coordinate, GPSPoint
 from mmlib.utils import factory
 
 
@@ -93,8 +93,8 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         self._results_buffer: deque[WindowResult] = deque()  # janelas matchadas pendentes
 
         # saída consolidada
-        self._out_edges: list = []
-        self._out_points: list = []
+        self._out_edges: list[str] = []
+        self._out_points: list[Coordinate] = []
 
         # Result stream
         self._result = OnlineMatchResult(matcher_name=self.matcher_name)
@@ -389,7 +389,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
 
         return out
 
-    def _extract_prefix_by_distance(self, poly: list, D: float) -> list:
+    def _extract_prefix_by_distance(self, poly: list[Coordinate], D: float) -> list[Coordinate]:
         if len(poly) < 2 or D <= 0:
             return [poly[0]] if poly else []
 
@@ -470,23 +470,22 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         h = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dl / 2) ** 2
         return 2 * R * math.asin(math.sqrt(h))
 
-    def _lerp(self, a, b, t: float):
+    def _lerp(self, a, b, t: float) -> Coordinate:
         lat1, lon1 = self._get_latlon(a)
         lat2, lon2 = self._get_latlon(b)
         lat = lat1 + (lat2 - lat1) * t
         lon = lon1 + (lon2 - lon1) * t
         # retorna no mesmo “formato” de entrada (tuple lat/lon).
-        return (lat, lon)
+        return Coordinate(lat=lat, lon=lon)
 
-    def _get_latlon(self, p) -> tuple[float, float]:
-        # suporta tuple/list [lat,lon] ou GPSPoint com atributos comuns
-        if isinstance(p, (tuple, list)) and len(p) >= 2:
-            return float(p[0]), float(p[1])
+    def _get_latlon(self, p) -> Coordinate:
         # tenta atributos típicos
         if hasattr(p, "lat") and hasattr(p, "lon"):
-            return float(p.lat), float(p.lon) # type: ignore
+            return Coordinate(lat=float(p.lat), lon=float(p.lon))
         if hasattr(p, "latitude") and hasattr(p, "longitude"):
-            return float(p.latitude), float(p.longitude) # type: ignore
+            return Coordinate(lat=float(p.latitude), lon=float(p.longitude))  # type: ignore
+        if isinstance(p, (tuple, list)) and len(p) >= 2:
+            return Coordinate(lat=float(p[0]), lon=float(p[1]))
         raise TypeError("Point must be (lat,lon) or have lat/lon attributes")
 
 
