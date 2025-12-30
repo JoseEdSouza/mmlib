@@ -7,8 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from typing import AsyncIterable, AsyncIterator, Final, cast, override
 
-from dtaidistance import dtw_ndim
-from shapely import LineString
+from shapely import LineString, Point
+from shapely.ops import linemerge
 
 from mmlib.matcher.base import BaseMatcher, BaseOnlineMatcher
 from mmlib.result.offline import MatchResult
@@ -143,60 +143,156 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         self, lines: list[LineString], dissolve=True
     ) -> LineString | None:
         """
-        Costura uma lista sequencial de LineStrings em uma única LineString.
-        
-        Estratégia:
-        1. Mantém a ordem da lista (respeita o fluxo temporal).
-        2. Remove pontos duplicados na junção (onde o fim de A == início de B).
-        3. Preenche gaps automaticamente (se fim de A != início de B, cria uma reta).
+        Une uma lista de LineStrings usando algoritmo de Overlap Geométrico
+        baseado em Reamostragem + RMSE para garantir continuidade visual.
         """
-        
         if not lines:
             return None
 
-        # Se só tem uma linha, não há o que costurar
+        # Se só tem uma linha ou não devemos dissolver, retorna o merge simples
         if len(lines) == 1:
             return lines[0]
 
-        # Se dissolve=False, teoricamente retornaríamos um MultiLineString, 
-        # mas a assinatura da função pede LineString. 
-        # Assumimos que o objetivo é sempre unificar a trajetória.
+        if not dissolve:
+            # Apenas une as linhas sem processar o overlap inteligente
+            # (Nota: linemerge pode falhar se não tocarem, então fallback para união)
+            try:
+                return cast(LineString, linemerge(lines))
+            except:
+                # Fallback: cria uma multilinestring ou une coordenadas brutas
+                all_coords = []
+                for line in lines:
+                    all_coords.extend(list(line.coords))
+                return LineString(all_coords)
 
-        # --- Abordagem de Concatenação de Coordenadas (Mais Robusta para Trajetórias) ---
-        # Ao contrário de ops.linemerge, isso garante a ordem temporal dos pontos.
-        
-        merged_coords = []
-        
-        for i, line in enumerate(lines):
-            if line.is_empty:
+        # --- ALGORITMO DE COSTURA ITERATIVA ---
+
+        # Começamos com a primeira geometria consolidada
+        merged_line = lines[0]
+
+        # Iteramos pelas próximas janelas tentando costurar uma a uma
+        for next_line in lines[1:]:
+            merged_line = self._stitch_two_geometries(merged_line, next_line)
+
+        return merged_line
+
+    def _stitch_two_geometries(
+        self, geom_a: LineString, geom_b: LineString
+    ) -> LineString:
+        """
+        Encontra o ponto de corte em geom_a onde geom_b começa e funde as duas.
+        """
+        # Constantes do Algoritmo (podem virar atributos da classe)
+        SAMPLE_STEP = 5.0  # metros
+        TEST_LENGTH = 20.0  # metros
+        RMSE_THRESHOLD = 15.0  # metros
+
+        if geom_a.is_empty:
+            return geom_b
+        if geom_b.is_empty:
+            return geom_a
+
+        # 1. Cria a assinatura do INÍCIO da nova geometria (B)
+        # Reamostra os primeiros 20 metros de B
+        signature_b = self._resample_shapely(geom_b, SAMPLE_STEP, TEST_LENGTH)
+
+        if not signature_b:
+            # B é muito curta ou inválida, apenas anexa
+            coords = list(geom_a.coords) + list(geom_b.coords)
+            return LineString(coords)
+
+        coords_a = list(geom_a.coords)
+        len_a = len(coords_a)
+
+        # 2. Busca essa assinatura no FINAL da geometria atual (A)
+        # Varre os últimos 40% dos vértices de A como candidatos a corte
+        start_search_idx = int(len_a * 0.6)
+
+        best_cut_index = -1
+        min_rmse = float("inf")
+
+        # Itera de trás para frente para achar o maior overlap possível (Greedy)
+        for i in range(len_a - 1, start_search_idx, -1):
+
+            # Constrói o segmento candidato (de i até o fim de A)
+            # Precisamos converter para LineString para usar métodos de geometria
+            candidate_coords = coords_a[i:]
+            if len(candidate_coords) < 2:
                 continue
-                
-            current_coords = list(line.coords)
-            
-            if i == 0:
-                merged_coords.extend(current_coords)
+
+            candidate_line = LineString(candidate_coords)
+
+            # Se o candidato for muito mais curto que a assinatura,
+            # o RMSE vai falhar ou ser impreciso.
+            if candidate_line.length < (TEST_LENGTH * 0.5):
+                continue
+
+            # Reamostra o candidato de A
+            signature_a = self._resample_shapely(
+                candidate_line, SAMPLE_STEP, TEST_LENGTH
+            )
+
+            # Calcula o erro
+            current_rmse = self._calculate_rmse_shapely(signature_a, signature_b)
+
+            if current_rmse < min_rmse:
+                min_rmse = current_rmse
+                best_cut_index = i
+
+        # 3. Aplica a Costura
+        if min_rmse < RMSE_THRESHOLD and best_cut_index != -1:
+            # SUCESSO: Cortamos A no índice encontrado e colamos B inteiro
+            # coords_a[:best_cut_index+1] inclui o ponto de solda
+            # coords_b[1:] evita duplicar o ponto se eles forem idênticos no espaço
+
+            final_coords_a = coords_a[: best_cut_index + 1]
+            final_coords_b = list(geom_b.coords)
+
+            # Pequena verificação para não duplicar vértice exato
+            if self._dist_sq(final_coords_a[-1], final_coords_b[0]) < 1e-6:
+                final_coords = final_coords_a + final_coords_b[1:]
             else:
-                # Verifica a "solda" com o segmento anterior
-                last_point = merged_coords[-1]
-                first_point_new = current_coords[0]
-                
-                if last_point == first_point_new:
-                    # Perfeito: O fim da anterior é exatamente o início desta.
-                    # Adicionamos a partir do segundo ponto para evitar duplicata.
-                    merged_coords.extend(current_coords[1:])
-                else:
-                    # Gap (Buraco) ou Salto: 
-                    # O algoritmo de corte anterior deixou um espaço ou as janelas não se tocaram.
-                    # Simplesmente adicionamos os novos pontos. 
-                    # O Shapely criará automaticamente uma linha reta (gap filling) entre
-                    # last_point e first_point_new ao criar o LineString final.
-                    merged_coords.extend(current_coords)
+                final_coords = final_coords_a + final_coords_b
 
-        # Validação final: precisa de pelo menos 2 pontos para formar uma linha
-        if len(merged_coords) < 2:
-            return None
+            return LineString(final_coords)
 
-        return LineString(merged_coords)
+        else:
+            # FALHA: Não convergiu. Retorna A + B (Gap Filling / Linha reta)
+            return LineString(coords_a + list(geom_b.coords))
+
+    def _resample_shapely(
+        self, line: LineString, step: float, max_len: float
+    ) -> list[Point]:
+        """Gera pontos interpolados ao longo da LineString."""
+        points = []
+        current_dist = 0.0
+        total_length = line.length
+        limit = min(total_length, max_len)
+
+        while current_dist <= limit:
+            points.append(line.interpolate(current_dist))
+            current_dist += step
+
+        return points
+
+    def _calculate_rmse_shapely(self, pts_a: list[Point], pts_b: list[Point]) -> float:
+        """Calcula RMSE entre duas listas de Pontos Shapely."""
+        n = min(len(pts_a), len(pts_b))
+        if n < 2:
+            return float("inf")
+
+        coords_a = np.array([(p.x, p.y) for p in pts_a[:n]])
+        coords_b = np.array([(p.x, p.y) for p in pts_b[:n]])
+        
+        sum_sq = np.sum((coords_a - coords_b) ** 2)
+
+        return np.sqrt(sum_sq / n)
+
+    def _dist_sq(self, c1, c2):
+        """Distância quadrática simples entre tuplas de coords (x, y)"""
+        dx = c1[0] - c2[0]
+        dy = c1[1] - c2[1]
+        return dx * dx + dy * dy
 
     def _resolve_edge_stitch(self, edges: list[list[str]]) -> list[str] | None:
         if not edges:
