@@ -146,6 +146,8 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         # 1) orientar para ficar “encadeado”
         ordered = [lines[0]]
         for i in range(1, len(lines)):
+            if len(lines[i].coords) == 0:
+                continue
             ordered.append(self.orient_like_prev(ordered[-1], lines[i]))
 
         # 2) opcional: dissolver overlaps (útil se você repete edge, vai-e-volta etc.)
