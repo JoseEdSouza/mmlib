@@ -110,7 +110,10 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         if not results_snapshot:
             return copy.deepcopy(self._result)
 
-        geometries = [LineString(res.matched_points) for res in results_snapshot]
+        geometries = [
+            LineString([(lon, lat) for lat, lon in res.matched_points])
+            for res in results_snapshot
+        ]
 
         edges_ids = [res.edge_ids for res in results_snapshot]
 
