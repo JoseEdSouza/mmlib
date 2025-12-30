@@ -101,7 +101,9 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
             yield agg_result
             self._window_results_buffer.popleft()
 
-    async def _agg_results(self, results_snapshot: list[MatchResult]) -> OnlineMatchResult:
+    async def _agg_results(
+        self, results_snapshot: list[MatchResult]
+    ) -> OnlineMatchResult:
         """
         Aggregate results from the buffered windows, applying dual stitching.
         """
@@ -131,70 +133,77 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
 
     # --- STITCHING LOGIC ---
 
-
-    def _resolve_geometric_stitch(self, lines: list[LineString], dissolve=True) -> LineString | None:
+    def _resolve_geometric_stitch(
+        self, lines: list[LineString], dissolve=True
+    ) -> LineString | None:
+        # 1. Filtragem Inicial: Remove None e geometrias vazias (is_empty)
         if not lines:
             return None
 
-        # Começamos com a primeira janela inteira
-        accumulated = lines[0]
-        
-        # Tolerância para considerar que é o mesmo ponto (aprox 10m em graus)
-        # Se a distância for maior que isso, assumimos que é um "gap" (perda de sinal)
-        GAP_THRESHOLD = 0.0001 
+        valid_lines = [line for line in lines if line is not None and not line.is_empty]
 
-        for i in range(1, len(lines)):
-            next_line = lines[i]
-            
-            # Se dissolve=False, fazemos apenas concatenação bruta (útil para debug)
+        if not valid_lines:
+            return None
+
+        # Começamos com a primeira janela válida
+        accumulated = valid_lines[0]
+
+        # Tolerância para gap vs overlap (aprox 11m em graus)
+        GAP_THRESHOLD = 0.0001
+
+        for i in range(1, len(valid_lines)):
+            next_line = valid_lines[i]
+
+            # Modo concatenação simples (debug ou performance máxima)
             if not dissolve:
+                # Converte para lista de coordenadas para fundir
                 coords = list(accumulated.coords) + list(next_line.coords)
                 accumulated = LineString(coords)
                 continue
 
             # --- LÓGICA DE PROJEÇÃO (SMART STITCH) ---
-            
-            # 1. Pega o último ponto onde paramos
+
             last_point = Point(accumulated.coords[-1])
-            
-            # 2. Projeta este ponto na nova linha para achar onde cortar.
-            # .project retorna a distância escalar ao longo da linha.
+
+            # Projeta o fim da acumulada na nova linha
             split_dist = next_line.project(last_point)
-            
-            # 3. Verifica se é uma continuação válida (overlap) ou um buraco (gap)
-            # O ponto projetado geométrico vs o ponto real final da anterior
+
+            # Verifica a distância real para decidir entre Gap ou Overlap
             projected_point = next_line.interpolate(split_dist)
             dist_to_line = last_point.distance(projected_point)
 
             new_segment_coords = []
 
+            # CASO GAP (Buraco grande): Conecta com reta simples
             if dist_to_line > GAP_THRESHOLD:
-                # CASO GAP: O algoritmo saltou longe (ex: túnel). 
-                # Não cortamos nada, apenas conectamos com uma reta.
                 new_segment_coords = list(next_line.coords)
-            else:
-                # CASO OVERLAP: A nova linha é uma continuação/correção da anterior.
-                # Cortamos o passado redundante.
-                
-                # Se a projeção for maior que o comprimento, a nova linha está totalmente "atrás" (backtracking)
-                if split_dist >= next_line.length:
-                    continue 
 
-                # Corta a linha do ponto de projeção até o fim
-                # Usamos substring do shapely para garantir a geometria exata
-                segment = substring(next_line, start_dist=split_dist, end_dist=next_line.length)
+            # CASO OVERLAP (Sobreposição): Corta o passado redundante
+            else:
+                # Se a projeção indica que a nova linha está toda "para trás", ignora ela
+                if split_dist >= next_line.length:
+                    continue
+
+                # Corta do ponto de projeção até o fim
+                segment = substring(
+                    next_line, start_dist=split_dist, end_dist=next_line.length
+                )
                 new_segment_coords = list(segment.coords)
 
-            # 4. União manual das coordenadas
+            # União manual
+            if not new_segment_coords:
+                continue
+
             current_coords = list(accumulated.coords)
-            
-            # Limpeza: Evita duplicar o vértice de junção se forem idênticos
-            if new_segment_coords and current_coords[-1] == new_segment_coords[0]:
+
+            # Evita duplicar o vértice de junção se forem idênticos
+            if current_coords[-1] == new_segment_coords[0]:
                 new_segment_coords.pop(0)
-                
+
             accumulated = LineString(current_coords + new_segment_coords)
 
         return accumulated
+
     def _resolve_edge_stitch(self, edges: list[list[str]]) -> list[str] | None:
         if not edges:
             return None
