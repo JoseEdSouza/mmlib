@@ -5,6 +5,7 @@ import copy
 from typing import AsyncIterable, AsyncIterator, Final, override
 
 from shapely import LineString
+from shapely.ops import linemerge, unary_union
 
 from mmlib.matcher.base import BaseMatcher, BaseOnlineMatcher
 from mmlib.result.offline import MatchResult
@@ -107,46 +108,52 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         if not results_snapshot:
             return copy.deepcopy(self._result)
 
-        geometries = [res.matched_points for res in results_snapshot]
+        geometries = [LineString(res.matched_points) for res in results_snapshot]
 
         edges_ids = [res.edge_ids for res in results_snapshot]
 
         stitched_geometry = self._resolve_geometric_stitch(geometries)
         stitched_edges = self._resolve_edge_stitch(edges_ids)
 
+        stiched_points = (
+            [
+                Coordinate(lon=lon, lat=lat)
+                for (lon, lat) in list(stitched_geometry.coords)
+            ]
+            if stitched_geometry
+            else []
+        )
 
-        self._result.matched_points.extend(stitched_geometry or [])
+        self._result.matched_points.extend(stiched_points)
         self._result.edge_ids.extend(stitched_edges or [])
 
         return copy.deepcopy(self._result)
 
     # --- STITCHING LOGIC ---
 
-    def _resolve_geometric_stitch(
-        self, geometries: list[list[Coordinate]]
-    ) -> list[Coordinate] | None:
-        if not geometries:
+    @staticmethod
+    def orient_like_prev(prev: LineString, cur: LineString) -> LineString:
+        # escolhe a orientação de cur que minimiza a distância entre prev.fim e cur.início
+        prev_end = prev.coords[-1]
+        d_fwd = (prev_end[0] - cur.coords[0][0])**2 + (prev_end[1] - cur.coords[0][1])**2
+        d_rev = (prev_end[0] - cur.coords[-1][0])**2 + (prev_end[1] - cur.coords[-1][1])**2
+        return cur if d_fwd <= d_rev else LineString(list(cur.coords)[::-1])
+
+    def _resolve_geometric_stitch(self, lines: list[LineString], dissolve=True):
+        if not lines:
             return None
 
-        final = geometries[0].copy()
+        # 1) orientar para ficar “encadeado”
+        ordered = [lines[0]]
+        for i in range(1, len(lines)):
+            ordered.append(self.orient_like_prev(ordered[-1], lines[i]))
 
-        for geom in geometries[1:]:
-            current = geom
+        # 2) opcional: dissolver overlaps (útil se você repete edge, vai-e-volta etc.)
+        geom = unary_union(ordered) if dissolve else ordered
 
-            if len(final) == 0:
-                final.extend(current)
-                continue
-            elif len(current) == 0:
-                continue
-
-            if final[-1] == current[0]:
-                final.extend(current[1:])
-            else:
-                new_point = current[-1]
-                if new_point != final[-1]:
-                    final.append(new_point)
-
-        return final
+        # 3) merge final
+        merged = linemerge(geom) # type: ignore
+        return merged
 
     def _resolve_edge_stitch(self, edges: list[list[str]]) -> list[str] | None:
         if not edges:
@@ -160,7 +167,8 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
 
         return final_edges
 
-    def _resolve_edge_overlap(self, edges_a: list[str], edges_b: list[str]) -> int:
+    @staticmethod
+    def _resolve_edge_overlap(edges_a: list[str], edges_b: list[str]) -> int:
         """
         Finds where A ends for B to begin based on Edge IDs.
         """
