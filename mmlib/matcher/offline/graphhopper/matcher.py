@@ -72,7 +72,7 @@ class GraphHopperMatcher(BaseMatcher):
 
         path = paths[0]
         points = path.get("points", [])
-        
+
         details = path.get("details", {})
         edge_ids = details.get("osm_way_id", [])
 

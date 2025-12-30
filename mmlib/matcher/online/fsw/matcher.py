@@ -1,11 +1,14 @@
 import asyncio
+import copy
+import numpy as np
+
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-import copy
-from typing import AsyncIterable, AsyncIterator, Final, override
 
-from shapely import LineString, Point
-from shapely.ops import substring
+from typing import AsyncIterable, AsyncIterator, Final, cast, override
+
+from dtaidistance import dtw_ndim
+from shapely import LineString
 
 from mmlib.matcher.base import BaseMatcher, BaseOnlineMatcher
 from mmlib.result.offline import MatchResult
@@ -139,71 +142,101 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
     def _resolve_geometric_stitch(
         self, lines: list[LineString], dissolve=True
     ) -> LineString | None:
-        # 1. Filtragem Inicial: Remove None e geometrias vazias (is_empty)
+        # 1. Filtros de Segurança (Empty/None)
         if not lines:
             return None
-
         valid_lines = [line for line in lines if line is not None and not line.is_empty]
-
         if not valid_lines:
             return None
 
-        # Começamos com a primeira janela válida
+        # Inicializa com a primeira janela
         accumulated = valid_lines[0]
 
-        # Tolerância para gap vs overlap (aprox 11m em graus)
-        GAP_THRESHOLD = 0.0001
+        # CONSTANTES DE AJUSTE
+        # Quantos pontos do final da acumulada usamos para comparar?
+        # Não precisa comparar a rota inteira de 10km com a nova janela, só o finalzinho.
+        LOOKBACK_SIZE = 20
+
+        # Distância máxima para aceitar o match (em graus). ~50 metros
+        MAX_MATCH_DIST = 0.0005
 
         for i in range(1, len(valid_lines)):
-            next_line = valid_lines[i]
+            new_line = valid_lines[i]
 
-            # Modo concatenação simples (debug ou performance máxima)
+            # Se dissolve=False, apenas concatena (modo rápido/debug)
             if not dissolve:
-                # Converte para lista de coordenadas para fundir
-                coords = list(accumulated.coords) + list(next_line.coords)
+                coords = list(accumulated.coords) + list(new_line.coords)
                 accumulated = LineString(coords)
                 continue
 
-            # --- LÓGICA DE PROJEÇÃO (SMART STITCH) ---
+            # --- PREPARAÇÃO DOS DADOS PARA DTW ---
+            # Converter para Numpy arrays (necessário para dtaidistance)
+            # Pegamos apenas o "rabo" da acumulada para ganhar performance
+            acc_coords = np.array(accumulated.coords)
+            new_coords = np.array(new_line.coords)
 
-            last_point = Point(accumulated.coords[-1])
+            tail_start_idx = max(0, len(acc_coords) - LOOKBACK_SIZE)
+            acc_tail = acc_coords[tail_start_idx:]
 
-            # Projeta o fim da acumulada na nova linha
-            split_dist = next_line.project(last_point)
+            # --- LÓGICA DTW (SMART ALIGNMENT) ---
 
-            # Verifica a distância real para decidir entre Gap ou Overlap
-            projected_point = next_line.interpolate(split_dist)
-            dist_to_line = last_point.distance(projected_point)
+            # O warping_path retorna uma lista de tuplas [(idx_tail, idx_new), ...]
+            # que alinham os pontos de melhor forma possível.
+            path = cast(list[tuple[int, int]], dtw_ndim.warping_path(acc_tail, new_coords))
 
-            new_segment_coords = []
+            # Queremos saber: Onde, na nova linha, termina a minha linha acumulada?
+            # Procuramos o último ponto da nossa tail no path.
+            last_tail_idx = len(acc_tail) - 1
 
-            # CASO GAP (Buraco grande): Conecta com reta simples
-            if dist_to_line > GAP_THRESHOLD:
-                new_segment_coords = list(next_line.coords)
+            # Encontrar o índice correspondente na nova janela (match_idx)
+            # Iteramos de trás para frente no path para achar o último alinhamento
+            match_idx_in_new = 0
+            dist_between_match = float("inf")
 
-            # CASO OVERLAP (Sobreposição): Corta o passado redundante
+            found_match = False
+            for p_tail, p_new in reversed(path):
+                if p_tail == last_tail_idx:
+                    match_idx_in_new = p_new
+
+                    # Calcular a distância real entre os pontos "casados"
+                    # para saber se é um overlap válido ou um gap (túnel/perda de sinal)
+                    p1 = acc_tail[p_tail]
+                    p2 = new_coords[p_new]
+                    dist_between_match = np.linalg.norm(p1 - p2)
+
+                    found_match = True
+                    break
+
+            # --- DECISÃO DE CORTE ---
+
+            new_segment_points = []
+
+            if not found_match or dist_between_match > MAX_MATCH_DIST:
+                # CASO GAP: O DTW não achou um bom par ou os pontos estão muito longe.
+                # Assumimos que o carro pulou/perdeu sinal. Adiciona tudo e conecta com reta.
+                new_segment_points = new_coords
             else:
-                # Se a projeção indica que a nova linha está toda "para trás", ignora ela
-                if split_dist >= next_line.length:
-                    continue
+                # CASO OVERLAP: Achamos onde a antiga termina dentro da nova.
+                # Pegamos tudo o que vem DEPOIS desse ponto na nova janela.
+                # match_idx_in_new é o ponto que JA TEMOS. Queremos o próximo.
+                start_cut = match_idx_in_new + 1
 
-                # Corta do ponto de projeção até o fim
-                segment = substring(
-                    next_line, start_dist=split_dist, end_dist=next_line.length
-                )
-                new_segment_coords = list(segment.coords)
+                if start_cut < len(new_coords):
+                    new_segment_points = new_coords[start_cut:]
+                else:
+                    # A nova janela está inteiramente contida no passado (backtracking)
+                    # Não adicionamos nada.
+                    new_segment_points = []
 
-            # União manual
-            if not new_segment_coords:
-                continue
+            # --- UNIÃO ---
+            if len(new_segment_points) > 0:
+                # Converter de volta para list of tuples para o Shapely
+                points_to_add = [tuple(p) for p in new_segment_points]
 
-            current_coords = list(accumulated.coords)
-
-            # Evita duplicar o vértice de junção se forem idênticos
-            if current_coords[-1] == new_segment_coords[0]:
-                new_segment_coords.pop(0)
-
-            accumulated = LineString(current_coords + new_segment_coords)
+                # Construir nova geometria
+                # Nota: acc_coords já é a lista completa da acumulada
+                final_coords = list(acc_coords) + points_to_add
+                accumulated = LineString(final_coords)
 
         return accumulated
 
