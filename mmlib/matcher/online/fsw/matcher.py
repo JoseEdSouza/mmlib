@@ -141,6 +141,12 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         for geom in geometries[1:]:
             current = geom.coords
 
+            if len(final) == 0:
+                final.extend(current)
+                continue
+            elif len(current) == 0:
+                continue
+
             if final[-1] == current[0]:
                 final.extend(current[1:])
             else:
