@@ -317,5 +317,5 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
 
 
 @factory(FixedSlidingWindowMatcher)
-def fsw_matcher(matcher: BaseMatcher) -> BaseOnlineMatcher:
-    return FixedSlidingWindowMatcher(matcher)
+def fsw_matcher(*args, **kwargs) -> BaseOnlineMatcher:
+    return FixedSlidingWindowMatcher(*args, **kwargs)

@@ -7,6 +7,8 @@ from mmlib.matcher.offline import (
 from mmlib.matcher.online import (
     BarefootOnlineMatcher,
     barefoot_online_matcher,
+    FixedSlidingWindowMatcher,
+    fsw_matcher,
 )
 from mmlib.matcher.base import BaseMatcher
 
@@ -17,5 +19,7 @@ __all__ = [
     "graphhopper_matcher",
     "BarefootOnlineMatcher",
     "barefoot_online_matcher",
+    "FixedSlidingWindowMatcher",
+    "fsw_matcher",
     "BaseMatcher",
 ]
