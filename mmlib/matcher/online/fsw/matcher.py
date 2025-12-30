@@ -4,8 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 import copy
 from typing import AsyncIterable, AsyncIterator, Final, override
 
-from shapely import LineString
-from shapely.ops import linemerge, unary_union
+from shapely import LineString, Point
+from shapely.ops import substring
 
 from mmlib.matcher.base import BaseMatcher, BaseOnlineMatcher
 from mmlib.result.offline import MatchResult
@@ -131,32 +131,70 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
 
     # --- STITCHING LOGIC ---
 
-    @staticmethod
-    def orient_like_prev(prev: LineString, cur: LineString) -> LineString:
-        # escolhe a orientação de cur que minimiza a distância entre prev.fim e cur.início
-        prev_end = prev.coords[-1]
-        d_fwd = (prev_end[0] - cur.coords[0][0])**2 + (prev_end[1] - cur.coords[0][1])**2
-        d_rev = (prev_end[0] - cur.coords[-1][0])**2 + (prev_end[1] - cur.coords[-1][1])**2
-        return cur if d_fwd <= d_rev else LineString(list(cur.coords)[::-1])
 
-    def _resolve_geometric_stitch(self, lines: list[LineString], dissolve=True):
+    def _resolve_geometric_stitch(self, lines: list[LineString], dissolve=True) -> LineString | None:
         if not lines:
             return None
 
-        # 1) orientar para ficar “encadeado”
-        ordered = [lines[0]]
+        # Começamos com a primeira janela inteira
+        accumulated = lines[0]
+        
+        # Tolerância para considerar que é o mesmo ponto (aprox 10m em graus)
+        # Se a distância for maior que isso, assumimos que é um "gap" (perda de sinal)
+        GAP_THRESHOLD = 0.0001 
+
         for i in range(1, len(lines)):
-            if len(lines[i].coords) == 0:
+            next_line = lines[i]
+            
+            # Se dissolve=False, fazemos apenas concatenação bruta (útil para debug)
+            if not dissolve:
+                coords = list(accumulated.coords) + list(next_line.coords)
+                accumulated = LineString(coords)
                 continue
-            ordered.append(self.orient_like_prev(ordered[-1], lines[i]))
 
-        # 2) opcional: dissolver overlaps (útil se você repete edge, vai-e-volta etc.)
-        geom = unary_union(ordered) if dissolve else ordered
+            # --- LÓGICA DE PROJEÇÃO (SMART STITCH) ---
+            
+            # 1. Pega o último ponto onde paramos
+            last_point = Point(accumulated.coords[-1])
+            
+            # 2. Projeta este ponto na nova linha para achar onde cortar.
+            # .project retorna a distância escalar ao longo da linha.
+            split_dist = next_line.project(last_point)
+            
+            # 3. Verifica se é uma continuação válida (overlap) ou um buraco (gap)
+            # O ponto projetado geométrico vs o ponto real final da anterior
+            projected_point = next_line.interpolate(split_dist)
+            dist_to_line = last_point.distance(projected_point)
 
-        # 3) merge final
-        merged = linemerge(geom) # type: ignore
-        return merged
+            new_segment_coords = []
 
+            if dist_to_line > GAP_THRESHOLD:
+                # CASO GAP: O algoritmo saltou longe (ex: túnel). 
+                # Não cortamos nada, apenas conectamos com uma reta.
+                new_segment_coords = list(next_line.coords)
+            else:
+                # CASO OVERLAP: A nova linha é uma continuação/correção da anterior.
+                # Cortamos o passado redundante.
+                
+                # Se a projeção for maior que o comprimento, a nova linha está totalmente "atrás" (backtracking)
+                if split_dist >= next_line.length:
+                    continue 
+
+                # Corta a linha do ponto de projeção até o fim
+                # Usamos substring do shapely para garantir a geometria exata
+                segment = substring(next_line, start_dist=split_dist, end_dist=next_line.length)
+                new_segment_coords = list(segment.coords)
+
+            # 4. União manual das coordenadas
+            current_coords = list(accumulated.coords)
+            
+            # Limpeza: Evita duplicar o vértice de junção se forem idênticos
+            if new_segment_coords and current_coords[-1] == new_segment_coords[0]:
+                new_segment_coords.pop(0)
+                
+            accumulated = LineString(current_coords + new_segment_coords)
+
+        return accumulated
     def _resolve_edge_stitch(self, edges: list[list[str]]) -> list[str] | None:
         if not edges:
             return None
