@@ -156,15 +156,6 @@ wheels = [
 ]
 
 [[package]]
-name = "dtaidistance"
-version = "2.3.13"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/32/0d/04de7998fba3b4881bf9abb4abe4a5422a53050670000ea7f03abaf9d7ed/dtaidistance-2.3.13.tar.gz", hash = "sha256:b0344a9b6f642863fcedacf5de86c4a0a0d4b4adec9b9be561a6f513ecf5e695", size = 985784, upload-time = "2025-02-17T16:31:13.858Z" }
-
-[[package]]
 name = "folium"
 version = "0.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -305,7 +296,6 @@ name = "mmlib"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "dtaidistance" },
     { name = "folium" },
     { name = "geopy" },
     { name = "gpx" },
@@ -330,7 +320,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "dtaidistance", specifier = ">=2.3.13" },
     { name = "folium", specifier = ">=0.20.0" },
     { name = "geopy", specifier = ">=2.4.1" },
     { name = "gpx", specifier = ">=2025.1.0" },
