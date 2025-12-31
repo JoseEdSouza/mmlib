@@ -32,6 +32,10 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         self._G_road = G_road
         self._nodes_gdf, self._edges_gdf = ox.graph_to_gdfs(self._G_road)
 
+        if window_size <= 0 or lookahead < 0:
+            raise ValueError(
+                "window_size must be > 0 and lookahead must be >= 0."
+            )
         self._window_size = window_size
         self._lookahead = lookahead
 
@@ -41,10 +45,6 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
             maxlen=self._lookahead + 1
         )
         self._result = OnlineMatchResult(matcher_name=self.matcher_name)
-
-        # Overlap de entrada (Raw)
-        self._raw_input_overlap: list[GPSPoint] = []
-        self._input_overlap_size = 20
 
         self._executor: ThreadPoolExecutor | None = None
 
@@ -57,7 +57,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
     async def start(self) -> None:
         if not self._started:
             self._window_buffer = deque(maxlen=self._window_size)
-            self._window_results_buffer = deque()
+            self._window_results_buffer = deque(maxlen=self._lookahead + 1)
             self._result = OnlineMatchResult(matcher_name=self.matcher_name)
             self._raw_input_overlap = []
             self._started = True
@@ -128,18 +128,18 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
 
         return self._result, new_cut_idx
 
-        ...
-
-    # --- EDGES (Mantido Lógica Python pura pois são Strings/Ints) ---
 
     def _smooth_geometry(
         self, traj_a: list[Coordinate], traj_b: list[Coordinate]
     ) -> list[Coordinate]:
+
         ## trajectory smoothing interpolation
         # Combine trajectories
         all_coords = traj_a + traj_b
         if len(all_coords) < 2:
             return all_coords
+
+        kind = "cubic" if len(all_coords) >= 4 else "linear"
 
         # Extract lat/lon arrays
         lats = np.array([c.lat for c in all_coords])
@@ -150,8 +150,8 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         t_smooth = np.linspace(0, 1, len(all_coords) * 2)
 
         # Interpolate coordinates
-        f_lat = interp1d(t, lats, kind="cubic")
-        f_lon = interp1d(t, lons, kind="cubic")
+        f_lat = interp1d(t, lats, kind=kind)
+        f_lon = interp1d(t, lons, kind=kind)
 
         smoothed_lats = f_lat(t_smooth)
         smoothed_lons = f_lon(t_smooth)
