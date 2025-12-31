@@ -90,7 +90,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
     Implementa Dual Stitching: Topológico (Edges) e Geométrico (Resampling + RMSE).
     """
 
-    _base_matcher_name: Final[str] = "fsw_robust"
+    _base_matcher_name: Final[str] = "FSW"
 
     def __init__(
         self,
@@ -107,7 +107,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         if lookahead < 0:
             raise ValueError("lookahead must be >= 0.")
 
-        self._matcher = matcher
+        self._offline_matcher = matcher
         self._window_size = window_size
         self._overlap_size = overlap_size
         self._lookahead = lookahead
@@ -127,7 +127,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
     @property
     @override
     def matcher_name(self) -> str:
-        return f"{self._base_matcher_name}({self._matcher.matcher_name})"
+        return f"{self._base_matcher_name}({self._offline_matcher.matcher_name})"
 
     @override
     async def start(self) -> None:
@@ -180,7 +180,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         # Executa Match Offline (Bloqueante) em outra thread
         loop = asyncio.get_running_loop()
         match_result = await loop.run_in_executor(
-            self._executor, self._matcher.match, batch_snapshot
+            self._executor, self._offline_matcher.match, batch_snapshot
         )
 
         self._window_results_buffer.append(match_result)
@@ -309,5 +309,5 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
 
 
 @factory(FixedSlidingWindowMatcher)
-def fsw_matcher(matcher: BaseMatcher) -> BaseOnlineMatcher:
-    return FixedSlidingWindowMatcher(matcher)
+def fsw_matcher(*args, **kwargs) -> BaseOnlineMatcher:
+    return FixedSlidingWindowMatcher(*args, **kwargs)
