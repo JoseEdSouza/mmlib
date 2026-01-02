@@ -1,112 +1,183 @@
-import asyncio
-
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor
-from typing import AsyncIterable, AsyncIterator, Final, override
+from typing import AsyncIterable, AsyncIterator
+from dataclasses import dataclass
+from collections import deque, Counter
 
 from mmlib.matcher.base import BaseMatcher, BaseOnlineMatcher
-from mmlib.result.online import OnlineMatchResult
+from mmlib.result import OnlineMatchResult
 from mmlib.types.points import GPSPoint
 from mmlib.utils import factory
 
 
-class FixedSlidingWindowMatcher(BaseOnlineMatcher):
-    _base_matcher_name: Final[str] = "FSW"
+@dataclass
+class FSWConfig:
+    window_size: int = 50
+    lookahead_depth: int = 3
+    convergence_depth: int = 15
+    emit_every: int = 10  # Emite resultado a cada N pontos
 
-    def __init__(
-        self,
-        matcher: BaseMatcher,
-        *,
-        window_size: int = 100,
-        lookahead: int = 10,
-    ) -> None:
-        super().__init__()
-        if lookahead >= window_size:
-            raise ValueError("lookahead must be < window_size")
 
-        self._matcher = matcher
-        self._window_size = window_size
-        self._lookahead = lookahead
-        self._commit_len = window_size - lookahead
-
-        self._point_buffer: deque[GPSPoint] = deque(maxlen=window_size)
-        self._committed_edges: list[str] = []
-
-        self._executor: ThreadPoolExecutor | None = None
+class FSWOnlineMatcher(BaseOnlineMatcher):
+    """FSW (Fixed Sliding Window) com Fixed-Lag Lookahead para BaseOnlineMatcher."""
 
     @property
-    @override
     def matcher_name(self) -> str:
-        return f"{self._base_matcher_name}({self._matcher.matcher_name})"
+        return "FSW-FixedLag-Online"
 
-    @override
+    def __init__(self, offline_matcher: BaseMatcher, config: FSWConfig | None = None):
+        super().__init__()
+        self.offline_matcher = offline_matcher
+        self.config = config or FSWConfig()
+
+        # Estado interno (inicializado no start())
+        self._point_buffer: deque[GPSPoint] = deque(maxlen=self.config.window_size * 4)
+        self._committed_path: list[str] = []
+        self._pending_lookahead: list[list[str]] = []
+        self._current_window_id: int = 0
+        self._all_points_processed: list[GPSPoint] = []
+
     async def start(self) -> None:
-        if not self._started:
-            self._point_buffer.clear()
-            self._committed_edges = []
-            self._executor = ThreadPoolExecutor(max_workers=1)
-            self._started = True
+        """Inicializa buffers e estado do FSW."""
+        if self._started:
+            return
 
-    @override
+        self._point_buffer.clear()
+        self._committed_path.clear()
+        self._pending_lookahead.clear()
+        self._current_window_id = 0
+        self._started = True
+
     async def stop(self) -> None:
-        if self._executor:
-            self._executor.shutdown(wait=True)
-            self._executor = None
+        """Limpa todos os buffers e libera memória."""
+        if not self._started:
+            return
+
+        self._point_buffer.clear()
+        self._committed_path.clear()
+        self._pending_lookahead.clear()
+
         self._started = False
 
-    @override
+    def _create_windows(self) -> list[list[GPSPoint]]:
+        """Cria N+1 janelas deslizantes do buffer atual."""
+        points = list(self._point_buffer)
+        windows: list[list[GPSPoint]] = []
+
+        buffer_len = len(points)
+        for i in range(self.config.lookahead_depth + 1):
+            start_idx = max(0, i * self.config.window_size)
+            # Lookahead windows pegam pontos futuros
+            end_idx = min(
+                start_idx
+                + self.config.window_size
+                + (self.config.lookahead_depth - i) * (self.config.window_size // 2),
+                buffer_len,
+            )
+
+            if start_idx < buffer_len:
+                windows.append(points[start_idx:end_idx])
+
+        return windows
+
+    def _find_convergence_point(self, sequences: list[list[str]]) -> int:
+        """Encontra convergence point entre sequências."""
+        if len(sequences) < 2 or not sequences[0]:
+            return 0
+
+        seq0 = sequences[0]
+        max_overlap = min(
+            len(seq0),
+            len(sequences[1]) if len(sequences) > 1 else 0,
+            self.config.convergence_depth,
+        )
+
+        for overlap_len in range(max_overlap, 0, -1):
+            if (
+                len(seq0) >= overlap_len
+                and len(sequences[1]) >= overlap_len
+                and seq0[-overlap_len:] == sequences[1][:overlap_len]
+            ):
+                return len(seq0) - overlap_len
+
+        return max(0, len(seq0) - self.config.convergence_depth // 2)
+
+    def _consensus_merge(self, sequences: list[list[int]]) -> list[int]:
+        """Merge consensual das sequências lookahead."""
+        if not sequences or not any(sequences):
+            return []
+
+        min_len = min((len(seq) for seq in sequences if seq), default=0)
+        consensus = []
+
+        for pos in range(min_len):
+            edges_at_pos = [seq[pos] for seq in sequences if pos < len(seq)]
+            if edges_at_pos:
+                most_common = Counter(edges_at_pos).most_common(1)[0][0]
+                consensus.append(most_common)
+
+        return consensus
+
     async def match_stream(
         self, points: AsyncIterable[GPSPoint]
     ) -> AsyncIterator[OnlineMatchResult]:
-        await self.start()
-        loop = asyncio.get_running_loop()
+        """Processa stream de pontos com FSW + lookahead."""
+        if not self._started:
+            raise RuntimeError("Matcher must be started first")
+
+        points_processed = 0
+        emit_counter = 0
 
         async for point in points:
             self._point_buffer.append(point)
+            points_processed += 1
 
-            if len(self._point_buffer) < self._window_size:
-                continue
+            # Só processa quando tem buffer suficiente
+            if len(self._point_buffer) >= self.config.window_size:
+                # Cria janelas e processa com matcher offline
+                windows = self._create_windows()
+                sequences = [
+                    self.offline_matcher.match(win).edge_ids
+                    for win in windows
+                    if len(win) >= 5
+                ]  # Min pontos
 
-            window_points = list(self._point_buffer)
+                if sequences:
+                    # Encontra convergence point e faz stitching
+                    conv_point = self._find_convergence_point(sequences)
+                    primary_seq = sequences[0]
 
-            match_result = await loop.run_in_executor(
-                self._executor,
-                self._matcher.match,
-                window_points,
-            )
+                    # Commit novo segmento
+                    new_committed = primary_seq[: conv_point + 1]
+                    self._committed_path.extend(new_committed)
 
-            edges = match_result.edge_ids
-            if len(edges) < self._commit_len:
-                continue
+                    # Prepara lookahead para próxima iteração
+                    self._pending_lookahead = [
+                        seq[conv_point + 1 :] for seq in sequences[1:]
+                    ]
 
-            # 🔒 Commit determinístico (prefixo)
-            new_committed = edges[: self._commit_len]
-            self._committed_edges.extend(new_committed)
+                    emit_counter += 1
+                    if emit_counter >= self.config.emit_every:
+                        measurement_points = list(self._point_buffer)[
+                            : len(self._committed_path)
+                        ]
+                        yield OnlineMatchResult(
+                            self.matcher_name,
+                            edge_ids=self._committed_path[-50:],
+                            measurement_points=measurement_points,
+                        )
+                        emit_counter = 0
+                self._current_window_id += 1
 
-            # desliza a janela
-            for _ in range(self._commit_len):
-                self._point_buffer.popleft()
-
+        # Final emit se sobrou buffer
+        if self._committed_path:
+            measurement_points = list(self._point_buffer)[: len(self._committed_path)]
             yield OnlineMatchResult(
-                matcher_name=self.matcher_name,
-                edge_ids=self._committed_edges.copy(),
-            )
-
-        # flush final
-        if self._point_buffer:
-            final_result = await loop.run_in_executor(
-                self._executor,
-                self._matcher.match,
-                list(self._point_buffer),
-            )
-            self._committed_edges.extend(final_result.edge_ids)
-
-            yield OnlineMatchResult(
-                matcher_name=self.matcher_name,
-                edge_ids=self._committed_edges.copy(),
+                self.matcher_name,
+                edge_ids=self._committed_path,
+                measurement_points=measurement_points,
+                _finished=True,
             )
 
 
-@factory(FixedSlidingWindowMatcher)
+@factory(FSWOnlineMatcher)
 def fsw_matcher(*args, **kwargs) -> BaseOnlineMatcher:
-    return FixedSlidingWindowMatcher(*args, **kwargs)
+    return FSWOnlineMatcher(*args, **kwargs)
