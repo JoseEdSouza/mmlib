@@ -10,26 +10,47 @@ from mmlib.utils import factory
 
 @dataclass
 class FSWConfig:
-    window_size: int = 50
-    lookahead_depth: int = 3
-    convergence_depth: int = 15
-    emit_every: int = 10  # Emite resultado a cada N pontos
+    # Emite resultado a cada N pontos
+    pass
 
 
-class FSWOnlineMatcher(BaseOnlineMatcher):
+class FixedSlidingWindowMatcher(BaseOnlineMatcher):
     """FSW (Fixed Sliding Window) com Fixed-Lag Lookahead para BaseOnlineMatcher."""
 
     @property
     def matcher_name(self) -> str:
         return "FSW-FixedLag-Online"
 
-    def __init__(self, offline_matcher: BaseMatcher, config: FSWConfig | None = None):
+    def __init__(
+        self,
+        offline_matcher: BaseMatcher,
+        *,
+        window_size: int = 50,
+        lookahead_depth: int = 3,
+        convergence_depth: int = 15,
+        emit_every: int = 10,
+    ):
         super().__init__()
         self.offline_matcher = offline_matcher
-        self.config = config or FSWConfig()
 
         # Estado interno (inicializado no start())
-        self._point_buffer: deque[GPSPoint] = deque(maxlen=self.config.window_size * 4)
+        if emit_every <= 0:
+            raise ValueError("emit_every must be positive")
+
+        if window_size <= 0:
+            raise ValueError("window_size must be positive")
+
+        if lookahead_depth < 0:
+            raise ValueError("lookahead_depth must be non-negative")
+
+        if convergence_depth <= 0:
+            raise ValueError("convergence_depth must be positive")
+
+        self._window_size = window_size
+        self._lookahead_depth = lookahead_depth
+        self._convergence_depth = convergence_depth
+        self._emit_every = emit_every
+        self._point_buffer: deque[GPSPoint] = deque(maxlen=self._window_size * 4)
         self._committed_path: list[str] = []
         self._pending_lookahead: list[list[str]] = []
         self._current_window_id: int = 0
@@ -63,13 +84,13 @@ class FSWOnlineMatcher(BaseOnlineMatcher):
         windows: list[list[GPSPoint]] = []
 
         buffer_len = len(points)
-        for i in range(self.config.lookahead_depth + 1):
-            start_idx = max(0, i * self.config.window_size)
+        for i in range(self._lookahead_depth + 1):
+            start_idx = max(0, i * self._window_size)
             # Lookahead windows pegam pontos futuros
             end_idx = min(
                 start_idx
-                + self.config.window_size
-                + (self.config.lookahead_depth - i) * (self.config.window_size // 2),
+                + self._window_size
+                + (self._lookahead_depth - i) * (self._window_size // 2),
                 buffer_len,
             )
 
@@ -87,7 +108,7 @@ class FSWOnlineMatcher(BaseOnlineMatcher):
         max_overlap = min(
             len(seq0),
             len(sequences[1]) if len(sequences) > 1 else 0,
-            self.config.convergence_depth,
+            self._convergence_depth,
         )
 
         for overlap_len in range(max_overlap, 0, -1):
@@ -98,7 +119,7 @@ class FSWOnlineMatcher(BaseOnlineMatcher):
             ):
                 return len(seq0) - overlap_len
 
-        return max(0, len(seq0) - self.config.convergence_depth // 2)
+        return max(0, len(seq0) - self._convergence_depth // 2)
 
     def _consensus_merge(self, sequences: list[list[int]]) -> list[int]:
         """Merge consensual das sequências lookahead."""
@@ -131,7 +152,7 @@ class FSWOnlineMatcher(BaseOnlineMatcher):
             points_processed += 1
 
             # Só processa quando tem buffer suficiente
-            if len(self._point_buffer) >= self.config.window_size:
+            if len(self._point_buffer) >= self._window_size:
                 # Cria janelas e processa com matcher offline
                 windows = self._create_windows()
                 sequences = [
@@ -155,7 +176,7 @@ class FSWOnlineMatcher(BaseOnlineMatcher):
                     ]
 
                     emit_counter += 1
-                    if emit_counter >= self.config.emit_every:
+                    if emit_counter >= self._emit_every:
                         measurement_points = list(self._point_buffer)[
                             : len(self._committed_path)
                         ]
@@ -178,6 +199,6 @@ class FSWOnlineMatcher(BaseOnlineMatcher):
             )
 
 
-@factory(FSWOnlineMatcher)
+@factory(FixedSlidingWindowMatcher)
 def fsw_matcher(*args, **kwargs) -> BaseOnlineMatcher:
-    return FSWOnlineMatcher(*args, **kwargs)
+    return FixedSlidingWindowMatcher(*args, **kwargs)
