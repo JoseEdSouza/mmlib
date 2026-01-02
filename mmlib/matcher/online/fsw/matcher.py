@@ -1,5 +1,4 @@
-from typing import AsyncIterable, AsyncIterator
-from dataclasses import dataclass
+from typing import AsyncIterable, AsyncIterator, override
 from collections import deque, Counter
 
 from mmlib.matcher.base import BaseMatcher, BaseOnlineMatcher
@@ -8,16 +7,11 @@ from mmlib.types.points import GPSPoint
 from mmlib.utils import factory
 
 
-@dataclass
-class FSWConfig:
-    # Emite resultado a cada N pontos
-    pass
-
-
 class FixedSlidingWindowMatcher(BaseOnlineMatcher):
     """FSW (Fixed Sliding Window) com Fixed-Lag Lookahead para BaseOnlineMatcher."""
 
     @property
+    @override
     def matcher_name(self) -> str:
         return "FSW-FixedLag-Online"
 
@@ -54,8 +48,8 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         self._committed_path: list[str] = []
         self._pending_lookahead: list[list[str]] = []
         self._current_window_id: int = 0
-        self._all_points_processed: list[GPSPoint] = []
 
+    @override
     async def start(self) -> None:
         """Inicializa buffers e estado do FSW."""
         if self._started:
@@ -67,6 +61,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         self._current_window_id = 0
         self._started = True
 
+    @override
     async def stop(self) -> None:
         """Limpa todos os buffers e libera memória."""
         if not self._started:
@@ -137,6 +132,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
 
         return consensus
 
+    @override
     async def match_stream(
         self, points: AsyncIterable[GPSPoint]
     ) -> AsyncIterator[OnlineMatchResult]:
@@ -159,7 +155,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
                     self.offline_matcher.match(win).edge_ids
                     for win in windows
                     if len(win) >= 5
-                ]  # Min pontos
+                ]
 
                 if sequences:
                     # Encontra convergence point e faz stitching
@@ -175,10 +171,17 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
                         seq[conv_point + 1 :] for seq in sequences[1:]
                     ]
 
+                    # ✅ FIX 1: CONSUMIR PONTOS PROCESSADOS
+                    # Remove pontos que já foram commitados
+                    points_to_remove = min(conv_point + 1, len(self._point_buffer) // 2)
+                    for _ in range(points_to_remove):
+                        if self._point_buffer:
+                            self._point_buffer.popleft()
+
                     emit_counter += 1
                     if emit_counter >= self._emit_every:
                         measurement_points = list(self._point_buffer)[
-                            : len(self._committed_path)
+                            : len(new_committed)
                         ]
                         yield OnlineMatchResult(
                             self.matcher_name,
@@ -186,11 +189,26 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
                             measurement_points=measurement_points,
                         )
                         emit_counter = 0
+
                 self._current_window_id += 1
 
-        # Final emit se sobrou buffer
+        # ✅ FIX 2: PROCESSAR PONTOS RESTANTES (flush final)
+        if len(self._point_buffer) >= 5:  # Mínimo para processar
+            windows = self._create_windows()
+            sequences = [
+                self.offline_matcher.match(win).edge_ids
+                for win in windows
+                if len(win) >= 5
+            ]
+
+            if sequences:
+                # Commita TUDO que sobrou (sem lookahead, é o final)
+                self._committed_path.extend(sequences[0])
+
+        # ✅ FIX 3: EMIT FINAL CORRETO
         if self._committed_path:
-            measurement_points = list(self._point_buffer)[: len(self._committed_path)]
+            # Usa todos os pontos do buffer restante
+            measurement_points = list(self._point_buffer)
             yield OnlineMatchResult(
                 self.matcher_name,
                 edge_ids=self._committed_path,
