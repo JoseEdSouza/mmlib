@@ -1,7 +1,7 @@
 import asyncio
 from concurrent.futures import Executor, ThreadPoolExecutor
 from typing import AsyncIterable, AsyncIterator, override
-from collections import deque, Counter
+from collections import deque
 
 from mmlib.matcher.base import BaseMatcher, BaseOnlineMatcher
 from mmlib.result import OnlineMatchResult
@@ -51,7 +51,6 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         self._committed_path: list[str] = []
         self._all_points: list[GPSPoint] = []
         self._commited_geometry: list[Coordinate] = []
-        self._pending_lookahead: list[list[str]] = []
         self._current_window_id: int = 0
 
     @override
@@ -66,7 +65,6 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         self._point_buffer.clear()
         self._committed_path.clear()
         self._commited_geometry.clear()
-        self._pending_lookahead.clear()
         self._current_window_id = 0
         self._started = True
 
@@ -78,7 +76,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         self._executor.shutdown(wait=True)
         self._point_buffer.clear()
         self._committed_path.clear()
-        self._pending_lookahead.clear()
+        self._commited_geometry.clear()
 
         self._started = False
 
@@ -129,22 +127,6 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
 
         return max(0, len(seq0) - convergence_depth // 2)
 
-    @staticmethod
-    def _consensus_merge[T](sequences: list[list[T]]) -> list[T]:
-        """Consensus merge of edge ID sequences."""
-        if not sequences or not any(sequences):
-            return []
-
-        min_len = min((len(seq) for seq in sequences if seq), default=0)
-        consensus: list[T] = []
-
-        for pos in range(min_len):
-            edges_at_pos = [seq[pos] for seq in sequences if pos < len(seq)]
-            if edges_at_pos:
-                most_common = Counter(edges_at_pos).most_common(1)[0][0]
-                consensus.append(most_common)
-
-        return consensus
 
     @override
     async def match_stream(
@@ -190,8 +172,6 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
                 new_committed_len = len(new_committed)
                 self._committed_path.extend(new_committed)
 
-                # ✅ FIX 1: CONSUMIR PONTOS PROCESSADOS
-                # Remove pontos que já foram commitados
                 points_to_remove = min(conv_edges + 1, len(self._point_buffer) // 2)
                 for _ in range(points_to_remove):
                     if self._point_buffer:
@@ -217,7 +197,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
                 )
                 emit_counter = 0
 
-        if len(self._point_buffer) != 0:
+        if len(self._point_buffer) > 0:
 
             results = await self._run_raw(loop)
             if results.edge_ids:
