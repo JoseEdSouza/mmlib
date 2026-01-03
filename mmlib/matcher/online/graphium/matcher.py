@@ -38,6 +38,7 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
 
         self._batch_size = batch_size
         self._points_buffer: list[GPSPoint] = []
+        self._remainder_points: list[GPSPoint] = []
         self._committed_geometry: list[Coordinate] = []
         self._committed_edge_ids: list[str] = []
         self._all_points: list[GPSPoint] = []
@@ -55,6 +56,7 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
             self._all_points.clear()
             self._committed_geometry.clear()
             self._committed_edge_ids.clear()
+            self._remainder_points.clear()
             self._started = True
 
     async def stop(self) -> None:
@@ -69,6 +71,7 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
         self._points_buffer.clear()
         self._committed_geometry.clear()
         self._committed_edge_ids.clear()
+        self._remainder_points.clear()
 
         self._started = False
 
@@ -82,6 +85,7 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
         await self.start()
 
         current_start_segment_id: str | None = None
+        remainder_points: list[GPSPoint] | None = None
         loop = asyncio.get_running_loop()
 
         async for point in points:
@@ -91,22 +95,34 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
 
             if len(self._points_buffer) < self._batch_size:
                 continue  # Wait to fill the buffer
+            
+            print(f"Processing buffer of {len(self._points_buffer)} points.")
+
+            batch = (remainder_points or []) + self._points_buffer
+
+            print(f"Processing batch of {len(batch)} points.")
 
             result, current_start_segment_id = await self._process_batch(
-                loop, current_start_segment_id
+                batch, loop, current_start_segment_id
             )
             retain = min(5, self._batch_size)
-            self._points_buffer = self._points_buffer[-retain:]
+            self._points_buffer.clear()
+            remainder_points = self._points_buffer[-retain:]
 
             yield result
 
         # Process remaining points
         if self._points_buffer:
-            result, _ = await self._process_batch(loop, current_start_segment_id)
+            batch = (remainder_points or []) + self._points_buffer
+            print(f"Processing final batch of {len(batch)} points.")
+            result, _ = await self._process_batch(batch, loop, current_start_segment_id)
             yield result
 
     async def _process_batch(
-        self, loop: asyncio.AbstractEventLoop, current_start_segment_id: str | None
+        self,
+        batch: list[GPSPoint],
+        loop: asyncio.AbstractEventLoop,
+        current_start_segment_id: str | None,
     ) -> tuple[OnlineMatchResult, str | None]:
         """Process a batch of points and return the match result."""
         extra_params = (
@@ -119,7 +135,7 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
         data, last_segment_id = await loop.run_in_executor(
             self._executor,
             self._offline_matcher.match_with_extra_params,
-            list(self._points_buffer),
+            batch,
             extra_params,
             self._session,
         )
