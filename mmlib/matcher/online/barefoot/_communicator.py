@@ -6,7 +6,7 @@ import logging
 from queue import Queue
 import time
 import threading
-from typing import AsyncGenerator, AsyncIterator, cast
+from typing import AsyncGenerator, AsyncIterator, Self, cast
 
 import zmq
 import zmq.asyncio as azmq
@@ -166,7 +166,7 @@ class _BarefootCommunicator:
         self._publisher = _BarefootPointPublisher(pub_host, pub_port)
         self._subscriber = _BarefootSubscriber(sub_host, sub_port)
 
-    async def __aenter__(self) -> "_BarefootCommunicator":
+    async def __aenter__(self) -> Self:
         await self._publisher.__aenter__()
         await self._subscriber.__aenter__()
         return self
