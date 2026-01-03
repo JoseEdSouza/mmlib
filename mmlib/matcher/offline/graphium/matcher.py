@@ -128,6 +128,14 @@ class GraphiumOfflineMatcher(BaseMatcher):
             logger.error(f"Request failed ({response.status_code}): {response.text}")
             response.raise_for_status()
 
+        if not response.content:
+            logger.warning(f"Empty response from Graphium API for URL: {url}")
+            return {
+                "points": [],
+                "edge_ids": [],
+                "last_segment_id": None,
+            }
+
         res = json.loads(response.content)
         segments = res.get("segments", [])
 
