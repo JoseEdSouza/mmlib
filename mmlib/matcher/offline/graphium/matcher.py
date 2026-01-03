@@ -56,7 +56,9 @@ class GraphiumOfflineMatcher(BaseMatcher):
         edge_ids = response["edge_ids"]
         return MatchResult(
             matcher_name=self.matcher_name,
-            measurement_points=points,
+            measurement_points=[
+                GPSPoint(lat=lat, lon=lon, time=ts) for lat, lon, ts in points
+            ],
             matched_points=res_points,
             edge_ids=edge_ids,
         )
