@@ -49,6 +49,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         self._emit_every = emit_every
         self._point_buffer: deque[GPSPoint] = deque(maxlen=self._window_size * 4)
         self._committed_path: list[str] = []
+        self._all_points: list[GPSPoint] = []
         self._commited_geometry: list[Coordinate] = []
         self._pending_lookahead: list[list[str]] = []
         self._current_window_id: int = 0
@@ -61,6 +62,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         self._executor: Executor = ThreadPoolExecutor(
             max_workers=self._lookahead_depth or 1
         )
+        self._all_points.clear()
         self._point_buffer.clear()
         self._committed_path.clear()
         self._commited_geometry.clear()
@@ -159,6 +161,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
 
         async for point in points:
             self._point_buffer.append(point)
+            self._all_points.append(point)
             points_processed += 1
 
             if len(self._point_buffer) < self._window_size:
@@ -204,14 +207,13 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
 
             emit_counter += 1
             if emit_counter >= self._emit_every and new_committed_len > 0:
-                measurement_points = list(self._point_buffer)[:new_committed_len]
                 edge_ids = self._dedup_list(self._committed_path)
                 matched_points = self._commited_geometry.copy()
                 yield OnlineMatchResult(
                     self.matcher_name,
                     edge_ids=edge_ids,
                     matched_points=matched_points or [],
-                    measurement_points=measurement_points,
+                    measurement_points=self._all_points.copy(),
                 )
                 emit_counter = 0
 
@@ -225,14 +227,13 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
                 self._commited_geometry.extend(results.matched_points)
 
         if self._committed_path:
-            measurement_points = list(self._point_buffer)
             edge_ids = self._dedup_list(self._committed_path)
             matched_points = self._commited_geometry.copy()
             yield OnlineMatchResult(
                 self.matcher_name,
                 matched_points=matched_points or [],
                 edge_ids=edge_ids,
-                measurement_points=measurement_points,
+                measurement_points=self._all_points.copy(),
                 _finished=True,
             )
 
