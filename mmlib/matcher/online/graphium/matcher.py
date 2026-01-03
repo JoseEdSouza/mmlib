@@ -95,6 +95,8 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
             result, current_start_segment_id = await self._process_batch(
                 loop, current_start_segment_id
             )
+            retain = min(5, self._batch_size)
+            self._points_buffer = self._points_buffer[-retain:]
 
             yield result
 
