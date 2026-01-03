@@ -24,9 +24,14 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
         version: str = "current",
         timeout_s: float = 60.0,
         batch_size: int = 10,
+        cold_start: int | None = 30,
+        remainder_points: bool = True,
     ) -> None:
         if batch_size <= 0:
             raise ValueError("Batch size must be a positive integer.")
+        if cold_start is not None and cold_start < 0:
+            raise ValueError("Cold start must be a non-negative integer or None.")
+
         super().__init__()
 
         self._offline_matcher = GraphiumOfflineMatcher(
@@ -35,9 +40,10 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
             version=version,
             timeout_s=timeout_s,
         )
-
+        self._cold_start = max(batch_size, cold_start) if cold_start else None
         self._batch_size = batch_size
         self._points_buffer: list[GPSPoint] = []
+        self._enable_remainder_points = remainder_points
         self._remainder_points: list[GPSPoint] = []
         self._committed_geometry: list[Coordinate] = []
         self._committed_edge_ids: list[str] = []
@@ -87,27 +93,41 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
         current_start_segment_id: str | None = None
         remainder_points: list[GPSPoint] | None = None
         loop = asyncio.get_running_loop()
+        cold_start_reached = False
 
         async for point in points:
             # Accumulate points in buffer
             self._points_buffer.append(point)
             self._all_points.append(point)
 
+            if (
+                (not cold_start_reached)
+                and (self._cold_start is not None)
+                and (len(self._all_points) < self._cold_start)
+            ):
+                continue  # Wait for cold start
+
+            if not cold_start_reached:
+                cold_start_reached = True
+
             if len(self._points_buffer) < self._batch_size:
                 continue  # Wait to fill the buffer
-            
-            print(f"Processing buffer of {len(self._points_buffer)} points.")
 
-            batch = (remainder_points or []) + self._points_buffer
-
-            print(f"Processing batch of {len(batch)} points.")
+            batch = (
+                remainder_points + self._points_buffer
+                if remainder_points
+                else self._points_buffer
+            )
 
             result, current_start_segment_id = await self._process_batch(
                 batch, loop, current_start_segment_id
             )
-            retain = min(5, self._batch_size)
+
+            if self._enable_remainder_points:
+                retain = min(5, self._batch_size)
+                remainder_points = self._points_buffer[-retain:]
+            
             self._points_buffer.clear()
-            remainder_points = self._points_buffer[-retain:]
 
             yield result
 
