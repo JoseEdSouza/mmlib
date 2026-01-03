@@ -3,6 +3,8 @@ from mmlib.matcher.offline import (
     barefoot_offline_matcher,
     GraphHopperMatcher,
     graphhopper_matcher,
+    GraphiumOfflineMatcher,
+    graphium_offline_matcher,
 )
 from mmlib.matcher.online import (
     BarefootOnlineMatcher,
@@ -17,6 +19,8 @@ __all__ = [
     "barefoot_offline_matcher",
     "GraphHopperMatcher",
     "graphhopper_matcher",
+    "GraphiumOfflineMatcher",
+    "graphium_offline_matcher",
     "BarefootOnlineMatcher",
     "barefoot_online_matcher",
     "FixedSlidingWindowMatcher",
