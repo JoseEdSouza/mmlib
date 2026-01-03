@@ -1,14 +1,17 @@
+import asyncio
+from concurrent.futures import Executor, ThreadPoolExecutor
 from typing import AsyncIterable, AsyncIterator, override
 from collections import deque, Counter
 
 from mmlib.matcher.base import BaseMatcher, BaseOnlineMatcher
 from mmlib.result import OnlineMatchResult
-from mmlib.types.points import GPSPoint
+from mmlib.result.offline import MatchResult
+from mmlib.types.points import Coordinate, GPSPoint
 from mmlib.utils import factory
 
 
 class FixedSlidingWindowMatcher(BaseOnlineMatcher):
-    """FSW (Fixed Sliding Window) com Fixed-Lag Lookahead para BaseOnlineMatcher."""
+    """FSW (Fixed Sliding Window) with fixed-lag lookahead online matcher."""
 
     @property
     @override
@@ -46,46 +49,51 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         self._emit_every = emit_every
         self._point_buffer: deque[GPSPoint] = deque(maxlen=self._window_size * 4)
         self._committed_path: list[str] = []
+        self._commited_geometry: list[Coordinate] = []
         self._pending_lookahead: list[list[str]] = []
         self._current_window_id: int = 0
 
     @override
     async def start(self) -> None:
-        """Inicializa buffers e estado do FSW."""
+        """Initialize buffers and state of the FSW."""
         if self._started:
             return
-
+        self._executor: Executor = ThreadPoolExecutor(
+            max_workers=self._lookahead_depth or 1
+        )
         self._point_buffer.clear()
         self._committed_path.clear()
+        self._commited_geometry.clear()
         self._pending_lookahead.clear()
         self._current_window_id = 0
         self._started = True
 
     @override
     async def stop(self) -> None:
-        """Limpa todos os buffers e libera memória."""
+        """Clear buffers and state of the FSW."""
         if not self._started:
             return
-
+        self._executor.shutdown(wait=True)
         self._point_buffer.clear()
         self._committed_path.clear()
         self._pending_lookahead.clear()
 
         self._started = False
 
-    def _create_windows(self) -> list[list[GPSPoint]]:
-        """Cria N+1 janelas deslizantes do buffer atual."""
-        points = list(self._point_buffer)
-        windows: list[list[GPSPoint]] = []
+    @staticmethod
+    def _create_windows[T](
+        sequence: list[T], window_size: int, lookahead_depth: int
+    ) -> list[list[T]]:
+        """Creates N+1 overlapping windows with lookahead."""
+        points = list(sequence)
+        windows: list[list[T]] = []
 
         buffer_len = len(points)
-        for i in range(self._lookahead_depth + 1):
-            start_idx = max(0, i * self._window_size)
+        for i in range(lookahead_depth + 1):
+            start_idx = max(0, i * window_size)
             # Lookahead windows pegam pontos futuros
             end_idx = min(
-                start_idx
-                + self._window_size
-                + (self._lookahead_depth - i) * (self._window_size // 2),
+                start_idx + window_size + (lookahead_depth - i) * (window_size // 2),
                 buffer_len,
             )
 
@@ -94,8 +102,11 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
 
         return windows
 
-    def _find_convergence_point(self, sequences: list[list[str]]) -> int:
-        """Encontra convergence point entre sequências."""
+    @staticmethod
+    def _find_convergence_point[T](
+        sequences: list[list[T]], convergence_depth: int
+    ) -> int:
+        """Finds the convergence point among multiple sequences."""
         if len(sequences) < 2 or not sequences[0]:
             return 0
 
@@ -103,7 +114,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         max_overlap = min(
             len(seq0),
             len(sequences[1]) if len(sequences) > 1 else 0,
-            self._convergence_depth,
+            convergence_depth,
         )
 
         for overlap_len in range(max_overlap, 0, -1):
@@ -114,15 +125,16 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
             ):
                 return len(seq0) - overlap_len
 
-        return max(0, len(seq0) - self._convergence_depth // 2)
+        return max(0, len(seq0) - convergence_depth // 2)
 
-    def _consensus_merge(self, sequences: list[list[int]]) -> list[int]:
-        """Merge consensual das sequências lookahead."""
+    @staticmethod
+    def _consensus_merge[T](sequences: list[list[T]]) -> list[T]:
+        """Consensus merge of edge ID sequences."""
         if not sequences or not any(sequences):
             return []
 
         min_len = min((len(seq) for seq in sequences if seq), default=0)
-        consensus = []
+        consensus: list[T] = []
 
         for pos in range(min_len):
             edges_at_pos = [seq[pos] for seq in sequences if pos < len(seq)]
@@ -136,85 +148,125 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
     async def match_stream(
         self, points: AsyncIterable[GPSPoint]
     ) -> AsyncIterator[OnlineMatchResult]:
-        """Processa stream de pontos com FSW + lookahead."""
+        """Process gps points in sliding windows with fixed-lag lookahead."""
         if not self._started:
             raise RuntimeError("Matcher must be started first")
 
         points_processed = 0
         emit_counter = 0
 
+        loop = asyncio.get_event_loop()
+
         async for point in points:
             self._point_buffer.append(point)
             points_processed += 1
 
-            # Só processa quando tem buffer suficiente
-            if len(self._point_buffer) >= self._window_size:
-                # Cria janelas e processa com matcher offline
-                windows = self._create_windows()
-                sequences = [
-                    self.offline_matcher.match(win).edge_ids
-                    for win in windows
-                    if len(win) >= 5
-                ]
+            if len(self._point_buffer) < self._window_size:
+                continue
 
-                if sequences:
-                    # Encontra convergence point e faz stitching
-                    conv_point = self._find_convergence_point(sequences)
-                    primary_seq = sequences[0]
+            # Cria janelas e processa com matcher offline
+            sequences = await self._run_windows(loop)
 
-                    # Commit novo segmento
-                    new_committed = primary_seq[: conv_point + 1]
-                    self._committed_path.extend(new_committed)
+            self._current_window_id += 1
 
-                    # Prepara lookahead para próxima iteração
-                    self._pending_lookahead = [
-                        seq[conv_point + 1 :] for seq in sequences[1:]
-                    ]
+            if not sequences:
+                continue
 
-                    # ✅ FIX 1: CONSUMIR PONTOS PROCESSADOS
-                    # Remove pontos que já foram commitados
-                    points_to_remove = min(conv_point + 1, len(self._point_buffer) // 2)
-                    for _ in range(points_to_remove):
-                        if self._point_buffer:
-                            self._point_buffer.popleft()
-
-                    emit_counter += 1
-                    if emit_counter >= self._emit_every:
-                        measurement_points = list(self._point_buffer)[
-                            : len(new_committed)
-                        ]
-                        yield OnlineMatchResult(
-                            self.matcher_name,
-                            edge_ids=self._committed_path[-50:],
-                            measurement_points=measurement_points,
-                        )
-                        emit_counter = 0
-
-                self._current_window_id += 1
-
-        # ✅ FIX 2: PROCESSAR PONTOS RESTANTES (flush final)
-        if len(self._point_buffer) >= 5:  # Mínimo para processar
-            windows = self._create_windows()
-            sequences = [
-                self.offline_matcher.match(win).edge_ids
-                for win in windows
-                if len(win) >= 5
+            edge_sequences = [seq.edge_ids for seq in sequences if seq.edge_ids]
+            geometry_sequences = [
+                seq.matched_points for seq in sequences if seq.matched_points
             ]
 
-            if sequences:
-                # Commita TUDO que sobrou (sem lookahead, é o final)
-                self._committed_path.extend(sequences[0])
+            new_committed_len = 0
+            if edge_sequences:
+                conv_edges = self._find_convergence_point(
+                    edge_sequences, self._convergence_depth
+                )
+                primary_seq = edge_sequences[0]
+                new_committed = primary_seq[: conv_edges + 1]
+                new_committed_len = len(new_committed)
+                self._committed_path.extend(new_committed)
 
-        # ✅ FIX 3: EMIT FINAL CORRETO
+                # ✅ FIX 1: CONSUMIR PONTOS PROCESSADOS
+                # Remove pontos que já foram commitados
+                points_to_remove = min(conv_edges + 1, len(self._point_buffer) // 2)
+                for _ in range(points_to_remove):
+                    if self._point_buffer:
+                        self._point_buffer.popleft()
+
+            if geometry_sequences:
+                conv_geometry = self._find_convergence_point(
+                    geometry_sequences, self._convergence_depth
+                )
+                primary_geom_seq = geometry_sequences[0]
+                new_commited_geom = primary_geom_seq[: conv_geometry + 1]
+                self._commited_geometry.extend(new_commited_geom)
+
+            emit_counter += 1
+            if emit_counter >= self._emit_every and new_committed_len > 0:
+                measurement_points = list(self._point_buffer)[:new_committed_len]
+                edge_ids = self._dedup_list(self._committed_path)
+                matched_points = self._commited_geometry.copy()
+                yield OnlineMatchResult(
+                    self.matcher_name,
+                    edge_ids=edge_ids,
+                    matched_points=matched_points or [],
+                    measurement_points=measurement_points,
+                )
+                emit_counter = 0
+
+        if len(self._point_buffer) != 0:
+
+            results = await self._run_raw(loop)
+            if results.edge_ids:
+                self._committed_path.extend(results.edge_ids)
+
+            if results.matched_points:
+                self._commited_geometry.extend(results.matched_points)
+
         if self._committed_path:
-            # Usa todos os pontos do buffer restante
             measurement_points = list(self._point_buffer)
+            edge_ids = self._dedup_list(self._committed_path)
+            matched_points = self._commited_geometry.copy()
             yield OnlineMatchResult(
                 self.matcher_name,
-                edge_ids=self._committed_path,
+                matched_points=matched_points or [],
+                edge_ids=edge_ids,
                 measurement_points=measurement_points,
                 _finished=True,
             )
+
+    async def _run_raw(self, loop: asyncio.AbstractEventLoop) -> MatchResult:
+        result = await loop.run_in_executor(
+            self._executor, self.offline_matcher.match, list(self._point_buffer)
+        )
+        return result
+
+    async def _run_windows(self, loop: asyncio.AbstractEventLoop) -> list[MatchResult]:
+        points_snapshot = list(self._point_buffer)
+        windows = self._create_windows(
+            points_snapshot, self._window_size, self._lookahead_depth
+        )
+
+        tasks = [
+            loop.run_in_executor(self._executor, self.offline_matcher.match, win)
+            for win in windows
+        ]
+        completed = await asyncio.gather(*tasks)
+
+        return completed
+
+    @staticmethod
+    def _dedup_list[T](items: list[T]) -> list[T]:
+        """Remove duplicatas consecutivas de uma lista."""
+        if not items:
+            return []
+
+        deduped = [items[0]]
+        for item in items[1:]:
+            if item != deduped[-1]:
+                deduped.append(item)
+        return deduped
 
 
 @factory(FixedSlidingWindowMatcher)
