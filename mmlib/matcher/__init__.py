@@ -11,6 +11,8 @@ from mmlib.matcher.online import (
     barefoot_online_matcher,
     FixedSlidingWindowMatcher,
     fsw_matcher,
+    GraphiumOnlineMatcher,
+    graphium_online_matcher,
 )
 from mmlib.matcher.base import BaseMatcher
 
@@ -25,5 +27,7 @@ __all__ = [
     "barefoot_online_matcher",
     "FixedSlidingWindowMatcher",
     "fsw_matcher",
+    "GraphiumOnlineMatcher",
+    "graphium_online_matcher",
     "BaseMatcher",
 ]

@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import override
+from typing import Any, override
 
 import requests
 from shapely import wkt
@@ -63,7 +63,31 @@ class GraphiumOfflineMatcher(BaseMatcher):
             edge_ids=edge_ids,
         )
 
-    def _request(self, points: list[GPSPoint]) -> dict:
+    def match_with_extra_params(
+        self,
+        points: list[GPSPoint],
+        extra_params: dict[str, Any] | None = None,
+        session: requests.Session | None = None,
+    ) -> MatchResult:
+        """Map match the provided GPS points using Graphium with extra parameters."""
+        response = self._request(points, extra_params, session=session)
+        res_points = response["points"]
+        edge_ids = response["edge_ids"]
+        return MatchResult(
+            matcher_name=self.matcher_name,
+            measurement_points=[
+                GPSPoint(lat=lat, lon=lon, time=ts) for lat, lon, ts in points
+            ],
+            matched_points=res_points,
+            edge_ids=edge_ids,
+        )
+
+    def _request(
+        self,
+        points: list[GPSPoint],
+        extra_params: dict[str, Any] | None = None,
+        session: requests.Session | None = None,
+    ) -> dict:
         """
         Send a request to the Graphium matching API.
 
@@ -77,6 +101,8 @@ class GraphiumOfflineMatcher(BaseMatcher):
         url = f"{self._base_url}/matching/graphs/{self._graph_name}/versions/{self._version}/matchtrack"
         params = {"outputVerbose": False, "timeoutMs": self._timeout_ms}
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        if extra_params:
+            params.update(extra_params)
 
         track_points = [
             {
@@ -91,7 +117,10 @@ class GraphiumOfflineMatcher(BaseMatcher):
 
         payload = {"id": 1, "trackPoints": track_points}
 
-        response = requests.post(url, params=params, json=payload, headers=headers)
+        post_func = session.post if session else requests.post
+
+        response = post_func(url, params=params, json=payload, headers=headers)
+        
         if not response.ok:
             logger.error(f"Request failed ({response.status_code}): {response.text}")
             response.raise_for_status()

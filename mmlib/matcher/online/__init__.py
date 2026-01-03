@@ -10,6 +10,10 @@ from mmlib.matcher.online.fsw import (
     FixedSlidingWindowMatcher,
     fsw_matcher,
 )
+from mmlib.matcher.online.graphium import (
+    GraphiumOnlineMatcher,
+    graphium_online_matcher,
+)
 
 __all__ = [
     "BarefootOnlineMatcher",
@@ -18,4 +22,6 @@ __all__ = [
     "batches_matcher",
     "FixedSlidingWindowMatcher",
     "fsw_matcher",
+    "GraphiumOnlineMatcher",
+    "graphium_online_matcher",
 ]

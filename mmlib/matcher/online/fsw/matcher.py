@@ -50,7 +50,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         self._point_buffer: deque[GPSPoint] = deque(maxlen=self._window_size * 4)
         self._committed_path: list[str] = []
         self._all_points: list[GPSPoint] = []
-        self._commited_geometry: list[Coordinate] = []
+        self._committed_coordinates: list[Coordinate] = []
         self._current_window_id: int = 0
 
     @override
@@ -64,7 +64,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         self._all_points.clear()
         self._point_buffer.clear()
         self._committed_path.clear()
-        self._commited_geometry.clear()
+        self._committed_coordinates.clear()
         self._current_window_id = 0
         self._started = True
 
@@ -76,7 +76,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         self._executor.shutdown(wait=True)
         self._point_buffer.clear()
         self._committed_path.clear()
-        self._commited_geometry.clear()
+        self._committed_coordinates.clear()
 
         self._started = False
 
@@ -182,13 +182,13 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
                     geometry_sequences, self._convergence_depth
                 )
                 primary_geom_seq = geometry_sequences[0]
-                new_commited_geom = primary_geom_seq[: conv_geometry + 1]
-                self._commited_geometry.extend(new_commited_geom)
+                new_committed_geom = primary_geom_seq[: conv_geometry + 1]
+                self._committed_coordinates.extend(new_committed_geom)
 
             emit_counter += 1
             if emit_counter >= self._emit_every and new_committed_len > 0:
                 edge_ids = self._dedup_list(self._committed_path)
-                matched_points = self._commited_geometry.copy()
+                matched_points = self._committed_coordinates.copy()
                 yield OnlineMatchResult(
                     self.matcher_name,
                     edge_ids=edge_ids,
@@ -204,11 +204,11 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
                 self._committed_path.extend(results.edge_ids)
 
             if results.matched_points:
-                self._commited_geometry.extend(results.matched_points)
+                self._committed_coordinates.extend(results.matched_points)
 
         if self._committed_path:
             edge_ids = self._dedup_list(self._committed_path)
-            matched_points = self._commited_geometry.copy()
+            matched_points = self._committed_coordinates.copy()
             yield OnlineMatchResult(
                 self.matcher_name,
                 matched_points=matched_points or [],
