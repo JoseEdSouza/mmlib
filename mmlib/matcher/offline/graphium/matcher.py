@@ -68,18 +68,21 @@ class GraphiumOfflineMatcher(BaseMatcher):
         points: list[GPSPoint],
         extra_params: dict[str, Any] | None = None,
         session: requests.Session | None = None,
-    ) -> MatchResult:
+    ) -> tuple[MatchResult, str]:
         """Map match the provided GPS points using Graphium with extra parameters."""
         response = self._request(points, extra_params, session=session)
         res_points = response["points"]
         edge_ids = response["edge_ids"]
-        return MatchResult(
-            matcher_name=self.matcher_name,
-            measurement_points=[
-                GPSPoint(lat=lat, lon=lon, time=ts) for lat, lon, ts in points
-            ],
-            matched_points=res_points,
-            edge_ids=edge_ids,
+        return (
+            MatchResult(
+                matcher_name=self.matcher_name,
+                measurement_points=[
+                    GPSPoint(lat=lat, lon=lon, time=ts) for lat, lon, ts in points
+                ],
+                matched_points=res_points,
+                edge_ids=edge_ids,
+            ),
+            response["last_segment_id"],
         )
 
     def _request(
@@ -120,7 +123,7 @@ class GraphiumOfflineMatcher(BaseMatcher):
         post_func = session.post if session else requests.post
 
         response = post_func(url, params=params, json=payload, headers=headers)
-        
+
         if not response.ok:
             logger.error(f"Request failed ({response.status_code}): {response.text}")
             response.raise_for_status()
@@ -133,10 +136,12 @@ class GraphiumOfflineMatcher(BaseMatcher):
             Coordinate(lat, lon) for geom in all_geometries for lon, lat in geom.coords
         ]
         all_edge_ids = [str(seg["wayId"]) for seg in segments]
+        last_segment_id = segments[-1]["segmentId"] if segments else None
 
         return {
             "points": all_coordinates,
             "edge_ids": all_edge_ids,
+            "last_segment_id": last_segment_id,
         }
 
 

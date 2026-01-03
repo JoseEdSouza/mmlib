@@ -116,7 +116,7 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
         )
 
         # Run matching in thread pool executor
-        data = await loop.run_in_executor(
+        data, last_segment_id = await loop.run_in_executor(
             self._executor,
             self._offline_matcher.match_with_extra_params,
             list(self._points_buffer),
@@ -124,8 +124,6 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
             self._session,
         )
 
-        # Update segment ID for next batch
-        current_start_segment_id = data.edge_ids[-1] if data.edge_ids else None
         self._committed_geometry.extend(data.matched_points)
         self._committed_edge_ids.extend(data.edge_ids)
 
@@ -136,7 +134,7 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
                 matched_points=self._committed_geometry.copy(),
                 edge_ids=self._committed_edge_ids.copy(),
             ),
-            current_start_segment_id,
+            last_segment_id,
         )
 
 
