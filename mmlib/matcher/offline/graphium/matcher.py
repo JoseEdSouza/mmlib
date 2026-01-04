@@ -55,23 +55,13 @@ class GraphiumOfflineMatcher(BaseMatcher):
     def match(self, points: list[GPSPoint]) -> MatchResult:
         """
         Map match the provided GPS points using Graphium.
-
-        Args:
-            points (list[GPSPoint]): The GPS points to map match.
-
-        Returns:
-            MatchResult: The result of the map matching process.
         """
         response = self._request(points)
-        res_points = response["points"]
-        edge_ids = response["edge_ids"]
         return MatchResult(
             matcher_name=self.matcher_name,
-            measurement_points=[
-                GPSPoint(lat=lat, lon=lon, time=ts) for lat, lon, ts in points
-            ],
-            matched_points=res_points,
-            edge_ids=edge_ids,
+            measurement_points=points,
+            matched_points=response["points"],
+            edge_ids=response["edge_ids"],
         )
 
     def match_with_extra_params(
@@ -79,21 +69,27 @@ class GraphiumOfflineMatcher(BaseMatcher):
         points: list[GPSPoint],
         extra_params: dict[str, Any] | None = None,
         session: requests.Session | None = None,
-    ) -> tuple[MatchResult, str]:
-        """Map match the provided GPS points using Graphium with extra parameters."""
+    ) -> tuple[MatchResult, str | None, list[dict]]:
+        """
+        Map match com parâmetros extras (ex: startSegmentId).
+        
+        Returns:
+            tuple: (MatchResult, last_segment_id, parsed_segments)
+        """
         response = self._request(points, extra_params, session=session)
-        res_points = response["points"]
-        edge_ids = response["edge_ids"]
+        
+        match_result = MatchResult(
+            matcher_name=self.matcher_name,
+            measurement_points=points,
+            matched_points=response["points"],
+            edge_ids=response["edge_ids"],
+        )
+        
+        # Retorna a trinca solicitada
         return (
-            MatchResult(
-                matcher_name=self.matcher_name,
-                measurement_points=[
-                    GPSPoint(lat=lat, lon=lon, time=ts) for lat, lon, ts in points
-                ],
-                matched_points=res_points,
-                edge_ids=edge_ids,
-            ),
-            response["last_segment_id"],
+            match_result, 
+            response["last_segment_id"], 
+            response["parsed_segments"]
         )
 
     def _request(
@@ -103,13 +99,8 @@ class GraphiumOfflineMatcher(BaseMatcher):
         session: requests.Session | None = None,
     ) -> dict:
         """
-        Send a request to the Graphium matching API.
-
-        Args:
-            points (list[GPSPoint]): The points to match.
-
-        Returns:
-            dict: The processed response containing matched points and edge IDs.
+        Envia o request e processa a resposta criando tanto a lista achatada
+        quanto a lista estruturada (parsed_segments).
         """
 
         track_points = [
@@ -124,41 +115,66 @@ class GraphiumOfflineMatcher(BaseMatcher):
         ]
 
         payload = {"id": self._id, "trackPoints": track_points}
-
         params = self._params | (extra_params or {})
-
         post = session.post if session else requests.post
 
-        response = post(self._url, params=params, json=payload, headers=self._headers)
-
-        if not response.ok:
-            logger.error(f"Request failed ({response.status_code}): {response.text}")
+        try:
+            response = post(self._url, params=params, json=payload, headers=self._headers)
             response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request falhou: {e}")
+            raise
 
         if not response.content:
-            logger.warning(f"Empty response from Graphium API for URL: {self._url}")
             return {
                 "points": [],
                 "edge_ids": [],
                 "last_segment_id": None,
+                "parsed_segments": []
             }
 
         res = json.loads(response.content)
         segments = res.get("segments", [])
 
-        all_geometries = [wkt.loads(seg["geometry"]) for seg in segments]
-        all_coordinates = [
-            Coordinate(lat, lon) for geom in all_geometries for lon, lat in geom.coords
-        ]
-        all_edge_ids = [str(seg["wayId"]) for seg in segments]
+        # Estruturas de retorno
+        all_coordinates = []
+        all_edge_ids = []
+        parsed_segments = []
+
+        for seg in segments:
+            # 1. Processar Geometria
+            geom_wkt = seg.get("geometry")
+            coords = []
+            if geom_wkt:
+                geom = wkt.loads(geom_wkt)
+                # Shapely (lon, lat) -> Coordinate (lat, lon)
+                coords = [Coordinate(lat, lon) for lon, lat in geom.coords]
+            
+            # 2. Identificadores
+            # segmentId é o ID interno do Graphium (usado para continuidade/topologia)
+            seg_id = str(seg.get("segmentId")) 
+            # wayId é o ID do OSM (usado para visualização/resultado final)
+            way_id = str(seg.get("wayId"))
+
+            # 3. Montar objeto estruturado para deduplicação no OnlineMatcher
+            parsed_segments.append({
+                "id": seg_id,       # Importante: usar segmentId para a lógica de 'startSegmentId'
+                "coords": coords,
+                "way_id": way_id
+            })
+
+            # 4. Montar listas achatadas (flattened) para o MatchResult padrão
+            all_coordinates.extend(coords)
+            all_edge_ids.append(way_id)
+
         last_segment_id = segments[-1]["segmentId"] if segments else None
 
         return {
             "points": all_coordinates,
             "edge_ids": all_edge_ids,
             "last_segment_id": last_segment_id,
+            "parsed_segments": parsed_segments
         }
-
 
 @factory(GraphiumOfflineMatcher)
 def graphium_offline_matcher(*args, **kwargs) -> GraphiumOfflineMatcher:
