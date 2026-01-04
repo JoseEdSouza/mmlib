@@ -1,6 +1,7 @@
 import json
 import logging
 from typing import Any, override
+from uuid import uuid4
 
 import requests
 from shapely import wkt
@@ -29,11 +30,21 @@ class GraphiumOfflineMatcher(BaseMatcher):
         self._base_url = base_url
         self._graph_name = graph_name
         self._version = version
+        self._id = hash(uuid4().hex)
 
         if timeout_s <= 0:
             raise ValueError("Timeout must be a positive value.")
 
         self._timeout_ms = int(timeout_s * 1000)
+        self._headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        self._params = {
+            "outputVerbose": "false",
+            "timeoutMs": str(self._timeout_ms),
+        }
+        self._url = f"{self._base_url}/matching/graphs/{self._graph_name}/versions/{self._version}/matchtrack"
 
     @property
     def matcher_name(self) -> str:
@@ -101,12 +112,6 @@ class GraphiumOfflineMatcher(BaseMatcher):
             dict: The processed response containing matched points and edge IDs.
         """
 
-        url = f"{self._base_url}/matching/graphs/{self._graph_name}/versions/{self._version}/matchtrack"
-        params = {"outputVerbose": False, "timeoutMs": self._timeout_ms}
-        headers = {"Accept": "application/json", "Content-Type": "application/json"}
-        if extra_params:
-            params.update(extra_params)
-
         track_points = [
             {
                 "id": i,
@@ -118,18 +123,20 @@ class GraphiumOfflineMatcher(BaseMatcher):
             for i, (lat, lon, ts) in enumerate(points)
         ]
 
-        payload = {"id": 1, "trackPoints": track_points}
+        payload = {"id": self._id, "trackPoints": track_points}
 
-        post_func = session.post if session else requests.post
+        params = self._params | (extra_params or {})
 
-        response = post_func(url, params=params, json=payload, headers=headers)
+        post = session.post if session else requests.post
+
+        response = post(self._url, params=params, json=payload, headers=self._headers)
 
         if not response.ok:
             logger.error(f"Request failed ({response.status_code}): {response.text}")
             response.raise_for_status()
 
         if not response.content:
-            logger.warning(f"Empty response from Graphium API for URL: {url}")
+            logger.warning(f"Empty response from Graphium API for URL: {self._url}")
             return {
                 "points": [],
                 "edge_ids": [],

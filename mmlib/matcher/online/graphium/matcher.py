@@ -94,7 +94,6 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
         remainder_points: list[GPSPoint] | None = None
         loop = asyncio.get_running_loop()
         cold_start_reached = False
-
         async for point in points:
             # Accumulate points in buffer
             self._points_buffer.append(point)
@@ -119,14 +118,17 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
                 else self._points_buffer
             )
 
-            result, current_start_segment_id = await self._process_batch(
+            result, new_segment_id = await self._process_batch(
                 batch, loop, current_start_segment_id
             )
+
+            if new_segment_id is not None:
+                current_start_segment_id = new_segment_id
 
             if self._enable_remainder_points:
                 retain = min(5, self._batch_size)
                 remainder_points = self._points_buffer[-retain:]
-            
+
             self._points_buffer.clear()
 
             yield result
