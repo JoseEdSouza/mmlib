@@ -45,11 +45,11 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
         self._points_buffer: list[GPSPoint] = []
         self._enable_remainder_points = remainder_points
         self._remainder_points: list[GPSPoint] = []
-        
+
         # Estado acumulado
         self._committed_geometry: list[Coordinate] = []
-        self._committed_segment_ids: list[str] = [] # IDs internos do Graphium (segmentId)
-        self._committed_edge_ids: list[str] = []    # IDs de visualização (wayId/OSM)
+        self._committed_segment_ids: list[str] = []
+        self._committed_edge_ids: list[str] = []
         self._all_points: list[GPSPoint] = []
 
     @property
@@ -103,7 +103,6 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
             self._points_buffer.append(point)
             self._all_points.append(point)
 
-            # Lógica de Cold Start
             if (
                 (not cold_start_reached)
                 and (self._cold_start is not None)
@@ -114,11 +113,9 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
             if not cold_start_reached:
                 cold_start_reached = True
 
-            # Lógica de Batch Size
             if len(self._points_buffer) < self._batch_size:
                 continue
 
-            # Monta o batch com remainder points (se ativado)
             batch = (
                 self._remainder_points + self._points_buffer
                 if self._remainder_points
@@ -129,11 +126,9 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
                 batch, loop, current_start_segment_id
             )
 
-            # Atualiza o ID âncora para a próxima iteração
             if new_segment_id is not None:
                 current_start_segment_id = new_segment_id
 
-            # Prepara remainder points para a próxima iteração
             if self._enable_remainder_points:
                 retain = min(5, self._batch_size)
                 self._remainder_points = self._points_buffer[-retain:]
@@ -144,7 +139,6 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
 
             yield result
 
-        # Processa pontos restantes no buffer final
         if self._points_buffer:
             batch = self._remainder_points + self._points_buffer
             result, _ = await self._process_batch(batch, loop, current_start_segment_id)
@@ -157,60 +151,45 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
         current_start_segment_id: str | None,
     ) -> tuple[OnlineMatchResult, str | None]:
         """Process a batch of points and return the match result."""
-        
+
         extra_params = (
             {"startSegmentId": current_start_segment_id}
             if current_start_segment_id
             else None
         )
 
-        # 1. Executa o Matcher Offline (agora retorna 3 valores)
-        # Retorno: (MatchResult ignorado, last_segment_id, parsed_segments)
-        _, last_segment_id, parsed_segments = await loop.run_in_executor(
+        detailed_result = await loop.run_in_executor(
             self._executor,
-            self._offline_matcher.match_with_extra_params,
+            self._offline_matcher._match_with_extra_params,
             batch,
             extra_params,
             self._session,
         )
 
-        # 2. Lógica de Deduplicação (Correção do "Zigue-Zague")
+        parsed_segments = detailed_result.parsed_segments
+        last_segment_id = detailed_result.last_segment_id
+
         segments_to_add = []
 
         if not self._committed_segment_ids:
-            # Primeira iteração: adiciona tudo
             segments_to_add = parsed_segments
         else:
-            # Iterações subsequentes: verifica overlap com o último segmento commitado
             last_committed_id = self._committed_segment_ids[-1]
             start_index = 0
-            
-            found_overlap = False
+
             for i, seg in enumerate(parsed_segments):
-                # Compara o ID interno (segmentId)
                 if seg["id"] == last_committed_id:
-                    # Encontrou a repetição da âncora.
-                    # O conteúdo novo começa DEPOIS deste índice.
                     start_index = i + 1
-                    found_overlap = True
-                
-                # Nota: Em casos raros de loop muito curto, pode haver múltiplos matches.
-                # Esta lógica pega o último match sequencial como ponto de corte,
-                # assumindo que o resto é progresso novo.
-            
-            # Se encontrou overlap, corta. Se não (salto no GPS?), adiciona tudo.
+
             if start_index < len(parsed_segments):
                 segments_to_add = parsed_segments[start_index:]
             else:
-                # Se start_index == len, significa que todos os segmentos retornados
-                # já eram conhecidos (veículo parado ou batch redundante).
                 segments_to_add = []
 
-        # 3. Commit dos novos segmentos limpos
         for seg in segments_to_add:
             self._committed_geometry.extend(seg["coords"])
-            self._committed_segment_ids.append(seg["id"])      # ID interno para controle
-            self._committed_edge_ids.append(seg["way_id"])     # ID externo para resultado
+            self._committed_segment_ids.append(seg["id"])
+            self._committed_edge_ids.append(seg["way_id"])
 
         return (
             OnlineMatchResult(
