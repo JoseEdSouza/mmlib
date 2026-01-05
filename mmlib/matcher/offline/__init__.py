@@ -10,6 +10,7 @@ from mmlib.matcher.offline.graphium import (
     GraphiumOfflineMatcher,
     graphium_offline_matcher,
 )
+from mmlib.matcher.offline.osrm import OSRMMatcher, osrm_matcher
 
 __all__ = [
     "BarefootOfflineMatcher",
@@ -18,4 +19,6 @@ __all__ = [
     "graphhopper_matcher",
     "GraphiumOfflineMatcher",
     "graphium_offline_matcher",
+    "OSRMMatcher",
+    "osrm_matcher",
 ]
