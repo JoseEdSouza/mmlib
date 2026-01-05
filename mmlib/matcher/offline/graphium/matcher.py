@@ -7,6 +7,11 @@ from uuid import uuid4
 import requests
 from shapely import wkt
 
+from mmlib.exceptions import (
+    MatcherConfigurationError,
+    MatcherConnectionError,
+    MatcherProtocolError,
+)
 from mmlib.matcher.base import BaseMatcher
 from mmlib.result.offline import MatchResult
 from mmlib.types.points import Coordinate, GPSPoint
@@ -58,7 +63,7 @@ class GraphiumOfflineMatcher(BaseMatcher):
         self._id = hash(uuid4().hex)
 
         if timeout_s <= 0:
-            raise ValueError("Timeout must be a positive value.")
+            raise MatcherConfigurationError("Timeout must be a positive value.")
 
         self._timeout_ms = int(timeout_s * 1000)
         self._headers = {
@@ -130,9 +135,12 @@ class GraphiumOfflineMatcher(BaseMatcher):
                 self._url, params=params, json=payload, headers=self._headers
             )
             response.raise_for_status()
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Request timeout para Graphium: {e}")
+            raise MatcherConnectionError(f"Timeout connecting to Graphium: {e}") from e
         except requests.exceptions.RequestException as e:
             logger.error(f"Request falhou: {e}")
-            raise
+            raise MatcherConnectionError(f"Failed to connect to Graphium: {e}") from e
 
         if not response.content:
             return _DetailedMatchResult(
@@ -142,7 +150,13 @@ class GraphiumOfflineMatcher(BaseMatcher):
                 parsed_segments=[],
             )
 
-        res = json.loads(response.content)
+        try:
+            res = json.loads(response.content)
+        except json.JSONDecodeError as e:
+            logger.error(f"Erro ao decodificar JSON do Graphium: {e}")
+            raise MatcherProtocolError(
+                f"Invalid JSON response from Graphium: {e}"
+            ) from e
         segments = res.get("segments", [])
 
         all_coordinates: list[Coordinate] = []

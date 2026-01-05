@@ -3,6 +3,7 @@ from concurrent.futures import Executor, ThreadPoolExecutor
 from typing import AsyncIterable, AsyncIterator, override
 from collections import deque
 
+from mmlib.exceptions import MatcherConfigurationError, MatcherRuntimeError
 from mmlib.matcher.base import BaseMatcher, BaseOnlineMatcher
 from mmlib.result import OnlineMatchResult
 from mmlib.result.offline import MatchResult
@@ -32,16 +33,16 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
 
         # Estado interno (inicializado no start())
         if emit_every <= 0:
-            raise ValueError("emit_every must be positive")
+            raise MatcherConfigurationError("emit_every must be positive")
 
         if window_size <= 0:
-            raise ValueError("window_size must be positive")
+            raise MatcherConfigurationError("window_size must be positive")
 
         if lookahead_depth < 0:
-            raise ValueError("lookahead_depth must be non-negative")
+            raise MatcherConfigurationError("lookahead_depth must be non-negative")
 
         if convergence_depth <= 0:
-            raise ValueError("convergence_depth must be positive")
+            raise MatcherConfigurationError("convergence_depth must be positive")
 
         self._window_size = window_size
         self._lookahead_depth = lookahead_depth
@@ -127,14 +128,13 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
 
         return max(0, len(seq0) - convergence_depth // 2)
 
-
     @override
     async def match_stream(
         self, points: AsyncIterable[GPSPoint]
     ) -> AsyncIterator[OnlineMatchResult]:
         """Process gps points in sliding windows with fixed-lag lookahead."""
         if not self._started:
-            raise RuntimeError("Matcher must be started first")
+            raise MatcherRuntimeError("Matcher must be started first")
 
         points_processed = 0
         emit_counter = 0
@@ -198,7 +198,6 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
                 emit_counter = 0
 
         if len(self._point_buffer) > 0:
-
             results = await self._run_raw(loop)
             if results.edge_ids:
                 self._committed_path.extend(results.edge_ids)

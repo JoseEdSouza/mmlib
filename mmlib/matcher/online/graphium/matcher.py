@@ -4,6 +4,7 @@ from typing import AsyncIterable, AsyncIterator, Final
 
 import requests
 
+from mmlib.exceptions import MatcherConfigurationError
 from mmlib.matcher.base import BaseOnlineMatcher
 from mmlib.matcher.offline.graphium import GraphiumOfflineMatcher
 from mmlib.result.online import OnlineMatchResult
@@ -28,9 +29,11 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
         remainder_points: bool = True,
     ) -> None:
         if batch_size <= 0:
-            raise ValueError("Batch size must be a positive integer.")
+            raise MatcherConfigurationError("Batch size must be a positive integer.")
         if cold_start is not None and cold_start < 0:
-            raise ValueError("Cold start must be a non-negative integer or None.")
+            raise MatcherConfigurationError(
+                "Cold start must be a non-negative integer or None."
+            )
 
         super().__init__()
 

@@ -160,7 +160,8 @@ class BarefootOnlineMatcher(BaseOnlineMatcher):
         # Snapshot to avoid yielding the same mutable object repeatedly
         try:
             return copy.deepcopy(self._result)
-        except Exception:
+        except Exception as e:
+            logger.warning("Error deepcopying result: %s. Returning mutable result.", e)
             return self._result
 
     # ------------------------ pipeline ------------------------

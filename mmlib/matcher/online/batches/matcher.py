@@ -2,6 +2,7 @@ import asyncio
 from concurrent.futures import Executor, ThreadPoolExecutor
 from typing import AsyncIterable, AsyncIterator, override
 
+from mmlib.exceptions import MatcherConfigurationError, MatcherRuntimeError
 from mmlib.matcher.base import BaseMatcher, BaseOnlineMatcher
 from mmlib.result import OnlineMatchResult
 from mmlib.result.offline import MatchResult
@@ -27,7 +28,7 @@ class BatchesOnlineMatcher(BaseOnlineMatcher):
         self.offline_matcher = offline_matcher
 
         if batch_size <= 0:
-            raise ValueError("batch_size must be positive")
+            raise MatcherConfigurationError("batch_size must be positive")
 
         self._batch_size = batch_size
 
@@ -92,7 +93,7 @@ class BatchesOnlineMatcher(BaseOnlineMatcher):
     ) -> AsyncIterator[OnlineMatchResult]:
         """Process GPS points in fixed-size batches."""
         if not self._started:
-            raise RuntimeError("Matcher must be started first")
+            raise MatcherRuntimeError("Matcher must be started first")
 
         loop = asyncio.get_event_loop()
 

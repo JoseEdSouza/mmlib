@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import AsyncIterable, AsyncIterator, Self
 
+from mmlib.exceptions import MatcherInputError, MatcherRuntimeError
 from mmlib.result import MatchResult, OnlineMatchResult
 from mmlib.types.points import GPSPoint
 
@@ -82,7 +83,7 @@ class BaseOnlineMatcher(ABC):
             OnlineMatchResult: The result of the online map matching process.
         """
         if not points:
-            raise ValueError("points must not be empty")
+            raise MatcherInputError("points must not be empty")
 
         async def _gen() -> AsyncIterator[GPSPoint]:
             for p in points:
@@ -95,6 +96,8 @@ class BaseOnlineMatcher(ABC):
 
         # If points is not empty, "last is None" indicates a bug/broken contract
         if last is None:
-            raise RuntimeError("match_stream emitted no results for non-empty input")
+            raise MatcherRuntimeError(
+                "match_stream emitted no results for non-empty input"
+            )
 
         return last
