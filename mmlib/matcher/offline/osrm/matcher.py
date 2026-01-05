@@ -81,10 +81,12 @@ class OSRMMatcher(BaseMatcher):
 
     def _request(self, points: list[GPSPoint]) -> dict[str, Any]:
         # Formats coords: {lon},{lat};{lon},{lat}
-        coordinates = ";".join(f"{p.coordinate.lon},{p.coordinate.lat}" for p in points)
+        coordinates = ";".join(f"{lat},{lon}" for (lat, lon, _) in points)
 
         # Formats timestamps: {ts1};{ts2};...
-        timestamps = ";".join(str(int(p.time.timestamp())) for p in points)
+        timestamps = ";".join(
+            str(int(timestamp.timestamp())) for (_, _, timestamp) in points
+        )
 
         url = f"{self._base_url}/match/v1/{self._profile}/{coordinates}"
 
