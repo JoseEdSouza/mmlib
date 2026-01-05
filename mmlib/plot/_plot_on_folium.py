@@ -82,11 +82,21 @@ def _add_nodes_layer(m: folium.Map, nodes_wgs: pd.DataFrame) -> None:
 
 
 def _filter_edges_by_osmid(
-    edges_wgs: pd.DataFrame, osmid_list: list[EdgeID]
+    edges_df: pd.DataFrame, osmid_list: list[str]
 ) -> pd.DataFrame:
-    """Return subset of edges GeoDataFrame filtered by OSMIDs."""
-    mask = edges_wgs["osmid"].astype(str).isin(osmid_list)
-    return edges_wgs[mask]
+    """
+    Filters a GeoDataFrame of edges by a list of OSMIDs,
+    handling cases where the 'osmid' column contains lists.
+    """
+    osmid_set = set(map(str, osmid_list))
+
+    def has_osmid(val):
+        if isinstance(val, (list, tuple)):
+            return any(str(v) in osmid_set for v in val)
+        return str(val) in osmid_set
+
+    mask = edges_df["osmid"].apply(has_osmid)
+    return edges_df[mask]
 
 
 def _add_path_layer(
