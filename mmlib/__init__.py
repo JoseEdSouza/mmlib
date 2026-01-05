@@ -1,15 +1,31 @@
 from mmlib.matcher import (
     BaseMatcher,
-    graphhopper_matcher,
+    BarefootOfflineMatcher,
     barefoot_offline_matcher,
+    GraphHopperMatcher,
+    graphhopper_matcher,
+    GraphiumOfflineMatcher,
+    graphium_offline_matcher,
+    BarefootOnlineMatcher,
     barefoot_online_matcher,
+    FixedSlidingWindowMatcher,
+    fsw_matcher,
+    GraphiumOnlineMatcher,
+    graphium_online_matcher,
 )
-from mmlib.utils.gpx import to_gpx
 
 __all__ = [
     "BaseMatcher",
-    "graphhopper_matcher",
+    "BarefootOfflineMatcher",
     "barefoot_offline_matcher",
+    "GraphHopperMatcher",
+    "graphhopper_matcher",
+    "GraphiumOfflineMatcher",
+    "graphium_offline_matcher",
+    "BarefootOnlineMatcher",
     "barefoot_online_matcher",
-    "to_gpx",
+    "FixedSlidingWindowMatcher",
+    "fsw_matcher",
+    "GraphiumOnlineMatcher",
+    "graphium_online_matcher",
 ]
