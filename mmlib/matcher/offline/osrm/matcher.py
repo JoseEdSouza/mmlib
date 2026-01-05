@@ -81,7 +81,7 @@ class OSRMMatcher(BaseMatcher):
 
     def _request(self, points: list[GPSPoint]) -> dict[str, Any]:
         # Formats coords: {lon},{lat};{lon},{lat}
-        coordinates = ";".join(f"{lat},{lon}" for (lat, lon, _) in points)
+        coordinates = ";".join(f"{lon},{lat}" for (lat, lon, _) in points)
 
         # Formats timestamps: {ts1};{ts2};...
         timestamps = ";".join(
