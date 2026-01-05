@@ -5,7 +5,7 @@ import requests
 
 from mmlib.matcher.base import BaseMatcher
 from mmlib.result import MatchResult
-from mmlib.types import Coordinate, GPSPoint
+from mmlib.types.points import Coordinate, GPSPoint
 from mmlib.utils import factory
 
 logger = logging.getLogger(__name__)
@@ -47,43 +47,43 @@ class OSRMMatcher(BaseMatcher):
 
         response_data = self._request(points)
 
+        all_matched_points: list[Coordinate] = []
+        all_edge_ids: list[str] = []
+
         matchings = response_data.get("matchings", [])
-        if not matchings:
-            logger.warning("OSRM returned 'Ok' code but no matchings found.")
-            return MatchResult(
-                matcher_name=self.matcher_name,
-                measurement_points=points,
-                matched_points=[],
-                edge_ids=[],
+
+        for matching in matchings:
+            geometry = matching.get("geometry")
+            if geometry and geometry.get("type") == "LineString":
+                # GeoJSON coordinates are [lon, lat]
+                coords = geometry.get("coordinates", [])
+                segment_points = [Coordinate(lat=c[1], lon=c[0]) for c in coords]
+                all_matched_points.extend(segment_points)
+
+            # matching -> legs -> steps -> name
+            for leg in matching.get("legs", []):
+                for step in leg.get("steps", []):
+                    # O Way ID está no campo 'name'
+                    way_id = step.get("name", "")
+                    all_edge_ids.append(str(way_id))
+
+        if not all_matched_points and response_data.get("code") == "Ok":
+            logger.warning(
+                "OSRM returned 'Ok' but no geometry extracted from matchings."
             )
-
-        best_match = matchings[0]
-
-        matched_points: list[Coordinate] = []
-        geometry = best_match.get("geometry")
-
-        if geometry and geometry.get("type") == "LineString":
-            coords = geometry.get("coordinates", [])
-            matched_points = [Coordinate(lat=c[1], lon=c[0]) for c in coords]
-
-        edge_ids: list[str] = []
-        for leg in best_match.get("legs", []):
-            for step in leg.get("steps", []):
-                way_id = step.get("name", "")
-                edge_ids.append(str(way_id))
 
         return MatchResult(
             matcher_name=self.matcher_name,
             measurement_points=points,
-            matched_points=matched_points,
-            edge_ids=edge_ids,
+            matched_points=all_matched_points,
+            edge_ids=all_edge_ids,
         )
 
     def _request(self, points: list[GPSPoint]) -> dict[str, Any]:
-        # Format coordinates: {lon},{lat};{lon},{lat}
+        # Formats coords: {lon},{lat};{lon},{lat}
         coordinates = ";".join(f"{p.coordinate.lon},{p.coordinate.lat}" for p in points)
 
-        # Format timestamps: Unix epoch integers
+        # Formats timestamps: {ts1};{ts2};...
         timestamps = ";".join(str(int(p.time.timestamp())) for p in points)
 
         url = f"{self._base_url}/match/v1/{self._profile}/{coordinates}"
@@ -92,7 +92,7 @@ class OSRMMatcher(BaseMatcher):
             "timestamps": timestamps,
             "geometries": "geojson",
             "overview": "full",
-            "steps": "true",  # Required to get the 'name' field per step
+            "steps": "true",
             "annotations": "nodes,distance,duration,speed",
         }
 
