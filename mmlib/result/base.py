@@ -86,7 +86,7 @@ class BaseMatchResult(ABC):
         """
         Plot the matched points and edges using mmlib.mmplot.
         """
-        from mmlib.mmplot.plot import plot_on_map
+        from mmlib.plot.plot import plot_on_map
 
         if title is None:
             title = f"Map Matching - {self.matcher_name}"
@@ -112,7 +112,7 @@ class BaseMatchResult(ABC):
         """
         Plot the matched path on a graph.
         """
-        from mmlib.mmplot.plot import plot_on_graph
+        from mmlib.plot.plot import plot_on_graph
 
         plot_on_graph(
             graph=graph,
@@ -129,7 +129,7 @@ class BaseMatchResult(ABC):
         """
         Plot the matched path on a folium map.
         """
-        from mmlib.mmplot.plot import plot_on_folium
+        from mmlib.plot.plot import plot_on_folium
 
         return plot_on_folium(
             graph=graph,

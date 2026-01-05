@@ -1,8 +1,8 @@
 import folium
 import networkx as nx
-from mmlib.mmplot._plot_on_map import _plot_on_map, Point
-from mmlib.mmplot._plot_on_graph import _plot_on_graph, EdgeID
-from mmlib.mmplot._plot_on_folium import _plot_on_folium
+from mmlib.plot._plot_on_map import _plot_on_map, Point
+from mmlib.plot._plot_on_graph import _plot_on_graph, EdgeID
+from mmlib.plot._plot_on_folium import _plot_on_folium
 
 
 def plot_on_map(
