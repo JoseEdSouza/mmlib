@@ -191,8 +191,8 @@ class BaseOnlineMatcher(ABC, BenchmarkMixin):
                 peak_mem = max(peak_mem, partial.memory_mb)
 
         t1 = time.perf_counter()
-        avg_latency = (
-            sum(p.step_latency_s for p in partial_results) / len(partial_results)
+        avg_latency_ms = (
+            sum(p.step_latency_ms for p in partial_results) / len(partial_results)
             if partial_results
             else 0
         )
@@ -204,8 +204,8 @@ class BaseOnlineMatcher(ABC, BenchmarkMixin):
         from mmlib.benchmark import OnlineBenchMetrics
 
         summary = OnlineBenchMetrics(
-            total_execution_time_s=t1 - t0,
-            avg_step_latency_s=avg_latency,
+            total_execution_time_ms=(t1 - t0) * 1000,
+            avg_step_latency_ms=avg_latency_ms,
             max_memory_peak_mb=peak_mem,
             total_points_processed=len(points),
             total_results_yielded=len(partial_results),

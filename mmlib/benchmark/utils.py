@@ -8,7 +8,7 @@ _process = psutil.Process()
 class ProcessMetrics(TypedDict):
     """Container for process-level performance metrics."""
 
-    cpu_time_s: float
+    cpu_time_ms: float
     memory_mb: float
     timestamp: float
 
@@ -19,7 +19,7 @@ def collect_process_metrics() -> ProcessMetrics:
 
     Returns:
         ProcessMetrics: A TypedDict containing:
-            - cpu_time_s: Total CPU time (user + system) in seconds.
+            - cpu_time_ms: Total CPU time (user + system) in milliseconds.
             - memory_mb: Resident Set Size (RSS) memory in MB.
             - timestamp: Current Unix timestamp.
     """
@@ -28,7 +28,7 @@ def collect_process_metrics() -> ProcessMetrics:
     mem = _process.memory_info()
 
     return ProcessMetrics(
-        cpu_time_s=cpu.user + cpu.system,
+        cpu_time_ms=(cpu.user + cpu.system) * 1000,
         memory_mb=mem.rss / (1024 * 1024),
         timestamp=time.time(),
     )

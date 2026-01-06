@@ -34,10 +34,10 @@ class BenchmarkMixin:
             delta_mem = end_metrics["memory_mb"] - start_metrics["memory_mb"]
 
             metrics = BenchMetrics(
-                execution_time_s=t1 - t0,
+                execution_time_ms=(t1 - t0) * 1000,
                 memory_peak_mb=peak_mem,
                 memory_delta_mb=delta_mem,
-                cpu_time_s=end_metrics["cpu_time_s"] - start_metrics["cpu_time_s"],
+                cpu_time_ms=end_metrics["cpu_time_ms"] - start_metrics["cpu_time_ms"],
                 timestamp=end_metrics["timestamp"],
                 custom_metadata={
                     "matcher_name": getattr(self, "matcher_name", "unknown"),
@@ -70,10 +70,10 @@ class BenchmarkMixin:
             delta_mem = end_metrics["memory_mb"] - start_metrics["memory_mb"]
 
             self._last_partial = PartialOnlineBenchMetrics(
-                step_latency_s=t1 - t0,
+                step_latency_ms=(t1 - t0) * 1000,
                 memory_mb=end_metrics["memory_mb"],
                 memory_delta_mb=delta_mem,
-                cpu_time_s=end_metrics["cpu_time_s"] - start_metrics["cpu_time_s"],
+                cpu_time_ms=end_metrics["cpu_time_ms"] - start_metrics["cpu_time_ms"],
                 timestamp=end_metrics["timestamp"],
                 input_points_indices=input_indices,
                 input_points_count=len(input_indices),
