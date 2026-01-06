@@ -1,11 +1,11 @@
 import time
-import psutil
 from contextlib import contextmanager
 from typing import Generator
 from mmlib.benchmark.types import (
     BenchMetrics,
     PartialOnlineBenchMetrics,
 )
+from mmlib.benchmark.utils import collect_process_metrics
 
 
 class BenchmarkMixin:
@@ -17,30 +17,30 @@ class BenchmarkMixin:
         Context manager to measure offline execution metrics.
         The resulting metrics are stored in self._last_bench_metrics.
         """
-        process = psutil.Process()
-
         # Start measurements
-        start_time = time.perf_counter()
-        # Initialize CPU percent measurement
-        process.cpu_percent(interval=None)
-        start_mem = process.memory_info().rss / (1024 * 1024)
+        start_metrics = collect_process_metrics()
+        t0 = time.perf_counter()
 
         try:
             yield
         finally:
-            end_time = time.perf_counter()
+            t1 = time.perf_counter()
             # Capture final states
-            cpu_usage = process.cpu_percent(interval=None)
-            end_mem = process.memory_info().rss / (1024 * 1024)
+            end_metrics = collect_process_metrics()
 
             # For a pragmatic peak, we use the end memory if it grew,
             # or start if it didn't. In a more complex version we'd monitor.
-            peak_mem = max(start_mem, end_mem)
+            peak_mem = max(start_metrics["memory_mb"], end_metrics["memory_mb"])
 
             metrics = BenchMetrics(
-                execution_time_s=end_time - start_time,
+                execution_time_s=t1 - t0,
                 memory_peak_mb=peak_mem,
-                cpu_usage_percent=cpu_usage,
+                cpu_time_s=end_metrics["cpu_time_s"] - start_metrics["cpu_time_s"],
+                timestamp=end_metrics["timestamp"],
+                custom_metadata={
+                    "matcher_name": getattr(self, "matcher_name", "unknown"),
+                    "mode": "offline",
+                },
             )
             self._last_bench_metrics = metrics
 
@@ -55,25 +55,28 @@ class BenchmarkMixin:
         Context manager to measure a single step in a streaming process.
         Returns a list that should be populated with input indices.
         """
-        process = psutil.Process()
-        start_time = time.perf_counter()
-        process.cpu_percent(interval=None)
+        start_metrics = collect_process_metrics()
+        t0 = time.perf_counter()
 
         input_indices: list[int] = []
 
         try:
             yield input_indices
         finally:
-            end_time = time.perf_counter()
-            cpu_usage = process.cpu_percent(interval=None)
-            mem = process.memory_info().rss / (1024 * 1024)
+            t1 = time.perf_counter()
+            end_metrics = collect_process_metrics()
 
             self._last_partial = PartialOnlineBenchMetrics(
-                step_latency_s=end_time - start_time,
-                memory_current_mb=mem,
-                cpu_usage_percent=cpu_usage,
+                step_latency_s=t1 - t0,
+                memory_mb=end_metrics["memory_mb"],
+                cpu_time_s=end_metrics["cpu_time_s"] - start_metrics["cpu_time_s"],
+                timestamp=end_metrics["timestamp"],
                 input_points_indices=input_indices,
                 input_points_count=len(input_indices),
+                custom_metadata={
+                    "matcher_name": getattr(self, "matcher_name", "unknown"),
+                    "mode": "online",
+                },
             )
 
     def _get_last_partial(self) -> PartialOnlineBenchMetrics:

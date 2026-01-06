@@ -177,22 +177,20 @@ class BaseOnlineMatcher(ABC, BenchmarkMixin):
         partial_results: list[PartialOnlineBenchMetrics] = []
         last_result: OnlineMatchResult | None = None
 
+        from mmlib.benchmark.utils import collect_process_metrics
         import time
-        import psutil
 
-        start_time = time.perf_counter()
-        process = psutil.Process()
-        process.cpu_percent(interval=None)
-        start_mem = process.memory_info().rss / (1024 * 1024)
-        peak_mem = start_mem
+        start_metrics = collect_process_metrics()
+        t0 = time.perf_counter()
+        peak_mem = start_metrics["memory_mb"]
 
         async with self:
             async for res, partial in self.bench_match_stream(_gen()):
                 last_result = res
                 partial_results.append(partial)
-                peak_mem = max(peak_mem, partial.memory_current_mb)
+                peak_mem = max(peak_mem, partial.memory_mb)
 
-        end_time = time.perf_counter()
+        t1 = time.perf_counter()
         avg_latency = (
             sum(p.step_latency_s for p in partial_results) / len(partial_results)
             if partial_results
@@ -206,12 +204,16 @@ class BaseOnlineMatcher(ABC, BenchmarkMixin):
         from mmlib.benchmark import OnlineBenchMetrics
 
         summary = OnlineBenchMetrics(
-            total_execution_time_s=end_time - start_time,
+            total_execution_time_s=t1 - t0,
             avg_step_latency_s=avg_latency,
             max_memory_peak_mb=peak_mem,
             total_points_processed=len(points),
             total_results_yielded=len(partial_results),
             partial_metrics=partial_results,
+            custom_metadata={
+                "matcher_name": self.matcher_name,
+                "mode": "online",
+            },
         )
 
         return last_result, summary
