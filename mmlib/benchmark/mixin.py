@@ -31,10 +31,12 @@ class BenchmarkMixin:
             # For a pragmatic peak, we use the end memory if it grew,
             # or start if it didn't. In a more complex version we'd monitor.
             peak_mem = max(start_metrics["memory_mb"], end_metrics["memory_mb"])
+            delta_mem = end_metrics["memory_mb"] - start_metrics["memory_mb"]
 
             metrics = BenchMetrics(
                 execution_time_s=t1 - t0,
                 memory_peak_mb=peak_mem,
+                memory_delta_mb=delta_mem,
                 cpu_time_s=end_metrics["cpu_time_s"] - start_metrics["cpu_time_s"],
                 timestamp=end_metrics["timestamp"],
                 custom_metadata={
@@ -65,10 +67,12 @@ class BenchmarkMixin:
         finally:
             t1 = time.perf_counter()
             end_metrics = collect_process_metrics()
+            delta_mem = end_metrics["memory_mb"] - start_metrics["memory_mb"]
 
             self._last_partial = PartialOnlineBenchMetrics(
                 step_latency_s=t1 - t0,
                 memory_mb=end_metrics["memory_mb"],
+                memory_delta_mb=delta_mem,
                 cpu_time_s=end_metrics["cpu_time_s"] - start_metrics["cpu_time_s"],
                 timestamp=end_metrics["timestamp"],
                 input_points_indices=input_indices,

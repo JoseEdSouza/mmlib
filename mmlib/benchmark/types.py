@@ -10,6 +10,7 @@ class BenchMetrics:
 
     execution_time_s: float
     memory_peak_mb: float
+    memory_delta_mb: float
     cpu_time_s: float
     timestamp: float = field(default_factory=time.time)
     custom_metadata: dict[str, Any] = field(
@@ -42,6 +43,7 @@ class PartialOnlineBenchMetrics:
 
     step_latency_s: float
     memory_mb: float
+    memory_delta_mb: float
     cpu_time_s: float
     timestamp: float = field(default_factory=time.time)
     input_points_indices: list[int] = field(default_factory=list)
