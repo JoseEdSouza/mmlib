@@ -29,6 +29,7 @@ class BenchMetrics:
             "execution_time_s": [self.execution_time_s],
             "cpu_time_s": [self.cpu_time_s],
             "memory_peak_mb": [self.memory_peak_mb],
+            "memory_delta_mb": [self.memory_delta_mb],
             "timestamp": [self.timestamp],
         }
         for k, v in self.custom_metadata.items():
