@@ -18,7 +18,7 @@ class BaseMatchResult(ABC):
     matched_points: list[Coordinate] = field(default_factory=list)
     edge_ids: list[str] = field(default_factory=list)
 
-    def to_dataframe(self) -> pd.DataFrame:
+    def to_df(self) -> pd.DataFrame:
         """Export results to a Pandas DataFrame."""
 
         # Ensure lists are same length for dataframe

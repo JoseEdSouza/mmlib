@@ -15,6 +15,8 @@ from mmlib.matcher.online import (
     fsw_matcher,
     GraphiumOnlineMatcher,
     graphium_online_matcher,
+    BatchesOnlineMatcher,
+    batches_matcher,
 )
 from mmlib.matcher.base import BaseMatcher
 
@@ -34,4 +36,6 @@ __all__ = [
     "GraphiumOnlineMatcher",
     "graphium_online_matcher",
     "BaseMatcher",
+    "BatchesOnlineMatcher",
+    "batches_matcher",
 ]

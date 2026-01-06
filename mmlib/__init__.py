@@ -14,6 +14,14 @@ from mmlib.matcher import (
     fsw_matcher,
     GraphiumOnlineMatcher,
     graphium_online_matcher,
+    BatchesOnlineMatcher,
+    batches_matcher,
+)
+from mmlib.benchmark import (
+    BenchMetrics,
+    PartialOnlineBenchMetrics,
+    OnlineBenchMetrics,
+    BenchmarkMixin,
 )
 
 __all__ = [
@@ -32,4 +40,10 @@ __all__ = [
     "fsw_matcher",
     "GraphiumOnlineMatcher",
     "graphium_online_matcher",
+    "BatchesOnlineMatcher",
+    "batches_matcher",
+    "BenchMetrics",
+    "PartialOnlineBenchMetrics",
+    "OnlineBenchMetrics",
+    "BenchmarkMixin",
 ]
