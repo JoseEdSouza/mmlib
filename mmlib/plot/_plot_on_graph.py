@@ -2,6 +2,7 @@ import math
 import networkx as nx
 import osmnx as ox
 import plotly.graph_objects as go
+from mmlib.result import calculate_match_metrics
 
 # --- Types ---
 type Lat = float
@@ -245,29 +246,37 @@ def _plot_on_graph(
         ],
     )
 
-    gt_edges = set(ground_truth_osmid_path)
-    mm_edges = set(map_matched_osmid_path)
+    metrics = calculate_match_metrics(
+        ground_truth_edges=ground_truth_osmid_path,
+        matched_edges=map_matched_osmid_path,
+        graph=graph,
+    )
 
-    matched = gt_edges & mm_edges
-    added = mm_edges - gt_edges
-    missing = gt_edges - mm_edges
-    difference = gt_edges ^ mm_edges
+    nk_str = (
+        f" | NK Error: {metrics.newson_krumm_error:.4f}"
+        if metrics.newson_krumm_error is not None
+        else ""
+    )
 
     fig.update_layout(
-        margin=dict(l=10, r=10, t=40, b=60),  # more space below
+        margin=dict(l=10, r=10, t=40, b=80),  # more space below
         annotations=[
             dict(
                 text=(
-                    f"Matched: {len(matched)} | "
-                    f"Added: {len(added)} | "
-                    f"Missing: {len(missing)} | "
-                    f"Difference: {len(difference)}"
+                    f"Matched: {metrics.matched_count} | "
+                    f"Added: {metrics.added_count} | "
+                    f"Missing: {metrics.missing_count}<br>"
+                    f"F1: {metrics.f1_score:.4f} | "
+                    f"Acc: {metrics.accuracy:.4f} | "
+                    f"Prec: {metrics.precision:.4f} | "
+                    f"Rec: {metrics.recall:.4f}"
+                    f"{nk_str}"
                 ),
                 showarrow=False,
                 xref="paper",
                 yref="paper",
                 x=0.5,
-                y=-0.1,
+                y=-0.15,
                 xanchor="center",
                 font=dict(size=12),
             )

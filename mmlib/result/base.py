@@ -7,6 +7,7 @@ import networkx as nx
 import pandas as pd
 
 from mmlib.types import Coordinate, GPSPoint
+from mmlib.result.metrics import MatchMetrics, calculate_match_metrics
 
 
 @dataclass
@@ -136,4 +137,18 @@ class BaseMatchResult(ABC):
             ground_truth_osmid_path=ground_truth_edge_ids or [],
             map_matched_osmid_path=self.edge_ids,
             zoom_start=zoom_start,
+        )
+
+    def calculate_metrics(
+        self,
+        ground_truth_edge_ids: list[str],
+        graph: nx.Graph | nx.MultiDiGraph | None = None,
+    ) -> MatchMetrics:
+        """
+        Calculate map matching evaluation metrics.
+        """
+        return calculate_match_metrics(
+            ground_truth_edges=ground_truth_edge_ids,
+            matched_edges=self.edge_ids,
+            graph=graph,
         )

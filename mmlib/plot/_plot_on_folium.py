@@ -1,9 +1,13 @@
 from collections import OrderedDict
+from typing import cast
+
 import folium
 import networkx as nx
 import osmnx as ox
 import pandas as pd
 import geopandas as gpd
+
+from mmlib.result import calculate_match_metrics, MatchMetrics
 
 type EdgeID = str
 
@@ -96,7 +100,7 @@ def _filter_edges_by_osmid(
         return str(val) in osmid_set
 
     mask = edges_df["osmid"].apply(has_osmid)
-    return edges_df[mask]
+    return cast(pd.DataFrame, edges_df[mask])
 
 
 def _add_path_layer(
@@ -119,31 +123,23 @@ def _add_path_layer(
     ).add_to(m)
 
 
-def _calculate_statistics(
-    ground_truth_osmid_path: list[EdgeID],
-    map_matched_osmid_path: list[EdgeID],
-) -> dict[str, int]:
-    """Calculate matching statistics between ground truth and map matched paths."""
-    gt_edges = set(ground_truth_osmid_path)
-    mm_edges = set(map_matched_osmid_path)
-
-    matched = gt_edges & mm_edges
-    added = mm_edges - gt_edges
-    missing = gt_edges - mm_edges
-    difference = gt_edges ^ mm_edges
-
-    return {
-        "Matched": len(matched),
-        "Added": len(added),
-        "Missing": len(missing),
-        "Difference": len(difference),
-        "Ground Truth Edges": len(ground_truth_osmid_path),
-        "Map Matched Edges": len(map_matched_osmid_path),
-    }
+# Removed _calculate_statistics as it is replaced by calculate_match_metrics
 
 
-def _build_statistics_html(stats: dict[str, int]) -> str:
+def _build_statistics_html(metrics: MatchMetrics) -> str:
     """Build HTML table with statistics."""
+    rows = [
+        ("Matched", metrics.matched_count),
+        ("Added", metrics.added_count),
+        ("Missing", metrics.missing_count),
+        ("Precision", f"{metrics.precision:.4f}"),
+        ("Recall", f"{metrics.recall:.4f}"),
+        ("F1 Score", f"{metrics.f1_score:.4f}"),
+        ("Accuracy", f"{metrics.accuracy:.4f}"),
+    ]
+    if metrics.newson_krumm_error is not None:
+        rows.append(("NK Error", f"{metrics.newson_krumm_error:.4f}"))
+
     stats_rows = "".join(
         f"""
         <tr>
@@ -152,19 +148,19 @@ def _build_statistics_html(stats: dict[str, int]) -> str:
         </tr>
         <tr><td colspan="2"><hr style="margin:2px 0; border:none; border-top:1px solid #222;"></td></tr>
         """
-        for key, value in stats.items()
+        for key, value in rows
     )
 
     return f"""
     <div style="background-color:white; padding:10px; border-radius:8px;
                 box-shadow: 2px 2px 6px rgba(0,0,0,0.2); font-size:13px;
                 position: fixed; right: 10px; bottom: 25px; z-index: 9999;
-                width: 160px;">
+                width: 180px;">
         <b>Map Matching Summary</b>
-        <table style="margin-top:5px; border-collapse:collapse;">
+        <table style="margin-top:5px; border-collapse:collapse; width:100%;">
             <tr>
                 <th style="text-align:left; padding-right:10px;">Metric</th>
-                <th style="text-align:right;">Count</th>
+                <th style="text-align:right;">Value</th>
             </tr>
             {stats_rows}
         </table>
@@ -233,8 +229,10 @@ def _plot_on_folium(
     _add_path_layer(m, edges_wgs, gt_path, "Ground Truth", "green")
 
     # Calculate and add statistics
-    stats = _calculate_statistics(gt_path, mm_path)
-    stats_html = _build_statistics_html(stats)
+    metrics = calculate_match_metrics(
+        ground_truth_edges=gt_path, matched_edges=mm_path, graph=graph
+    )
+    stats_html = _build_statistics_html(metrics)
     _add_statistics_box(m, stats_html)
 
     # Add layer control
