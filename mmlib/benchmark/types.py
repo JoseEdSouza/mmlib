@@ -62,6 +62,7 @@ class PartialOnlineBenchMetrics:
             "step_latency_s": self.step_latency_s,
             "cpu_time_s": self.cpu_time_s,
             "memory_mb": self.memory_mb,
+            "memory_delta_mb": self.memory_delta_mb,
             "timestamp": self.timestamp,
             "input_points_count": self.input_points_count,
         }
@@ -107,5 +108,17 @@ class OnlineBenchMetrics:
             df.attrs["total_execution_time_s"] = self.total_execution_time_s
             df.attrs["avg_step_latency_s"] = self.avg_step_latency_s
             df.attrs["max_memory_peak_mb"] = self.max_memory_peak_mb
+            df.attrs["total_points_processed"] = self.total_points_processed
+            df.attrs["total_results_yielded"] = self.total_results_yielded
+            df.attrs["avg_points_per_step"] = (
+                self.total_points_processed / len(self.partial_metrics)
+                if self.partial_metrics
+                else 0
+            )
+            df.attrs["avg_delta_memory_mb"] = (
+                sum(m.memory_delta_mb for m in self.partial_metrics) / len(self.partial_metrics)
+                if self.partial_metrics
+                else 0
+            )
 
         return df
