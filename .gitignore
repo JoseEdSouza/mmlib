@@ -19,11 +19,6 @@ cache
 # Virtual environments
 .venv
 
-# data dirs
-*/data/*
-data
-output
-
 #volumes
 */volumes/*
 graphhopper_data
