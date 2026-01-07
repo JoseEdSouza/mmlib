@@ -4,6 +4,7 @@ from typing import AsyncIterable, AsyncIterator
 from mmlib.matcher.base import BaseOnlineMatcher
 from mmlib.result import OnlineMatchResult
 from mmlib.types import GPSPoint, Coordinate
+import pytest
 
 
 class MockOnlineMatcher(BaseOnlineMatcher):
@@ -29,6 +30,7 @@ class MockOnlineMatcher(BaseOnlineMatcher):
             yield result
 
 
+@pytest.mark.asyncio
 async def test_online_bench():
     matcher = MockOnlineMatcher()
     points = [
@@ -59,13 +61,46 @@ async def test_online_bench():
     print(f"Avg latency: {summary.avg_step_latency_ms:.2f}ms")
     print(f"Total results: {summary.total_results_yielded}")
 
-    df = summary.to_df()
-    print("\nSummary DataFrame (Partial Metrics):")
-    print(df)
+    print("\n--- Testing to_df() with new columns ---")
+    df = summary.to_df(expand_summary=True)
+    print("DataFrame columns:", df.columns.tolist())
 
-    assert summary.total_results_yielded == 3
-    assert summary.total_points_processed == 3
-    print("\nOnline benchmark test passed!")
+    # Verify mandatory columns
+    expected_cols = [
+        "matcher_name",
+        "mode",
+        "step_index",
+        "timestamp",
+        "step_latency_ms",
+        "inter_arrival_ms",
+        "points_per_step",
+        "cum_points",
+        "cum_step_latency_ms",
+        "total_execution_time_ms",
+        "total_cpu_time_ms",
+        "throughput_in_pps",
+        "avg_points_per_step",
+    ]
+    for col in expected_cols:
+        assert col in df.columns, f"Column {col} missing from DataFrame"
+
+    # Verify values
+    assert df["step_index"].tolist() == [0, 1, 2]
+    assert df["points_per_step"].tolist() == [1, 1, 1]
+    assert df["cum_points"].tolist() == [1, 2, 3]
+
+    # First inter_arrival_ms should be NA (or pd.NA)
+    import pandas as pd
+
+    assert pd.isna(df.loc[0, "inter_arrival_ms"])
+
+    # Verify attrs
+    assert df.attrs["total_results_yielded"] == 3
+    assert df.attrs["total_points_processed"] == 3
+    assert df.attrs["matcher_name"] == "mock_online"
+    assert df.attrs["mode"] == "online"
+
+    print("\nOnline benchmark verification passed!")
 
 
 if __name__ == "__main__":

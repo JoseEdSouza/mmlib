@@ -182,37 +182,44 @@ class BaseOnlineMatcher(ABC, BenchmarkMixin):
 
         start_metrics = collect_process_metrics()
         t0 = time.perf_counter()
+
         peak_mem = start_metrics["memory_mb"]
+        first_output_perf: float | None = None
 
         async with self:
             async for res, partial in self.bench_match_stream(_gen()):
+                if first_output_perf is None:
+                    first_output_perf = time.perf_counter()
+
                 last_result = res
                 partial_results.append(partial)
                 peak_mem = max(peak_mem, partial.memory_mb)
 
         t1 = time.perf_counter()
-        avg_latency_ms = (
-            sum(p.step_latency_ms for p in partial_results) / len(partial_results)
-            if partial_results
-            else 0
-        )
+        end_metrics = collect_process_metrics()
 
         if last_result is None:
             raise MatcherRuntimeError("bench_match_stream emitted no results")
 
-        # Create the consolidated metrics from mmlib.benchmark
-        from mmlib.benchmark import OnlineBenchMetrics
+        total_execution_time_ms = (t1 - t0) * 1000
+        total_cpu_time_ms = end_metrics["cpu_time_ms"] - start_metrics["cpu_time_ms"]
 
-        summary = OnlineBenchMetrics(
-            total_execution_time_ms=(t1 - t0) * 1000,
-            avg_step_latency_ms=avg_latency_ms,
-            max_memory_peak_mb=peak_mem,
-            total_points_processed=len(points),
-            total_results_yielded=len(partial_results),
-            partial_metrics=partial_results,
+        ttff_ms = None
+        if first_output_perf is not None:
+            ttff_ms = (first_output_perf - t0) * 1000
+
+        summary = OnlineBenchMetrics.from_partials(
+            partials=partial_results,
+            total_execution_time_ms=total_execution_time_ms,
+            total_cpu_time_ms=total_cpu_time_ms,
             custom_metadata={
                 "matcher_name": self.matcher_name,
                 "mode": "online",
+                "n_input_points": len(points),
+                "memory_peak_sampled_mb": peak_mem,
+                "ttff_ms": ttff_ms,
+                # Diagnósticos úteis:
+                "n_emissions": len(partial_results),
             },
         )
 
