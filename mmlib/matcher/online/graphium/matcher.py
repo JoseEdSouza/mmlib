@@ -26,7 +26,7 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
         timeout_s: float = 60.0,
         batch_size: int = 10,
         cold_start: int | None = 30,
-        remainder_points: bool = True,
+        remainder_points: bool = False,
     ) -> None:
         if batch_size <= 0:
             raise MatcherConfigurationError("Batch size must be a positive integer.")
@@ -129,16 +129,19 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
                 batch, loop, current_start_segment_id
             )
 
+            # Update for next batch only if we have a new segment ID
+            # So graphium can have more context to find segment related
+            # To the current points
             if new_segment_id is not None:
                 current_start_segment_id = new_segment_id
 
-            if self._enable_remainder_points:
-                retain = min(5, self._batch_size)
-                self._remainder_points = self._points_buffer[-retain:]
-            else:
-                self._remainder_points = []
+                if self._enable_remainder_points:
+                    retain = min(5, self._batch_size)
+                    self._remainder_points = self._points_buffer[-retain:]
+                else:
+                    self._remainder_points = []
 
-            self._points_buffer.clear()
+                self._points_buffer.clear()
 
             yield result
 
