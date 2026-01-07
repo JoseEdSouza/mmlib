@@ -213,7 +213,6 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
                 matched_points=matched_points or [],
                 edge_ids=edge_ids,
                 measurement_points=self._all_points.copy(),
-                _finished=True,
             )
 
     async def _run_raw(self, loop: asyncio.AbstractEventLoop) -> MatchResult:

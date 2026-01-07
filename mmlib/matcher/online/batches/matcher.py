@@ -145,7 +145,6 @@ class BatchesOnlineMatcher(BaseOnlineMatcher):
                 edge_ids=edge_ids,
                 matched_points=matched_points,
                 measurement_points=self._all_points.copy(),
-                _finished=True,
             )
 
 
