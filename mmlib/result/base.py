@@ -19,47 +19,22 @@ class BaseMatchResult(ABC):
     matched_points: list[Coordinate] = field(default_factory=list)
     edge_ids: list[str] = field(default_factory=list)
 
-    def to_df(self) -> pd.DataFrame:
+    def to_df(self, metrics: MatchMetrics | None = None) -> pd.DataFrame:
         """Export results to a Pandas DataFrame."""
 
-        # Ensure lists are same length for dataframe
-        length = max(
-            len(self.measurement_points), len(self.matched_points), len(self.edge_ids)
+        df = pd.DataFrame(
+            {
+                "matcher_name": [self.matcher_name],
+                "measurement_points": [[p.as_tuple for p in self.measurement_points]],
+                "matched_points": [[p.as_tuple for p in self.matched_points]],
+                "edge_ids": [[self.edge_ids]],
+            }
         )
 
-        data: list[dict[str, Any]] = []
-        for i in range(length):
-            row: dict[str, Any] = {"step": i}
+        if metrics:
+            df.attrs.update(metrics.to_dict())
 
-            # Measurement
-            if i < len(self.measurement_points):
-                pt = self.measurement_points[i]
-                row["lat"] = pt.coordinate.lat
-                row["lon"] = pt.coordinate.lon
-                row["time"] = pt.time
-            else:
-                row["lat"] = None
-                row["lon"] = None
-                row["time"] = None
-
-            # Matched
-            if i < len(self.matched_points):
-                mpt = self.matched_points[i]
-                row["matched_lat"] = mpt.lat
-                row["matched_lon"] = mpt.lon
-            else:
-                row["matched_lat"] = None
-                row["matched_lon"] = None
-
-            # Edge
-            if i < len(self.edge_ids):
-                row["edge_id"] = self.edge_ids[i]
-            else:
-                row["edge_id"] = None
-
-            data.append(row)
-
-        return pd.DataFrame(data)
+        return df
 
     def to_geojson(self) -> dict[str, Any]:
         """Export matched path as GeoJSON LineString."""
