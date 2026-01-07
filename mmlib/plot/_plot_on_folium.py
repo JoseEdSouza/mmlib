@@ -135,6 +135,7 @@ def _build_statistics_html(metrics: MatchMetrics) -> str:
         ("Precision", f"{metrics.precision:.4f}"),
         ("Recall", f"{metrics.recall:.4f}"),
         ("F1 Score", f"{metrics.f1_score:.4f}"),
+        ("Error Rate", f"{metrics.error_rate:.4f}"),
         ("Accuracy", f"{metrics.accuracy:.4f}"),
     ]
     if metrics.newson_krumm_error is not None:

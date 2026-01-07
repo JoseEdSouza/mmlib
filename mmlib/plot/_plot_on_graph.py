@@ -266,6 +266,7 @@ def _plot_on_graph(
                     f"Matched: {metrics.matched_count} | "
                     f"Added: {metrics.added_count} | "
                     f"Missing: {metrics.missing_count}<br>"
+                    f"Error Rate: {metrics.error_rate:.4f} | "
                     f"F1: {metrics.f1_score:.4f} | "
                     f"Acc: {metrics.accuracy:.4f} | "
                     f"Prec: {metrics.precision:.4f} | "
