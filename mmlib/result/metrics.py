@@ -12,7 +12,10 @@ class MatchMetrics:
     f1_score: float
     accuracy: float
 
-    # Based on Newson and Krumm (2009)
+    # Based on spatio-temporal-trajectory-simplification-for-inferring-travel-paths li et. al. 2014
+    error_rate: float
+
+    # Based on hidden-markov-map-matching-through-noise-and-sparseness newson & krumm 2009
     newson_krumm_error: float | None = None
 
     # Counts
@@ -42,6 +45,19 @@ class MatchMetrics:
             "total_added_length": self.total_added_length,
             "total_missing_length": self.total_missing_length,
         }
+
+    @staticmethod
+    def calculate(
+        ground_truth_edges: Iterable[str],
+        matched_edges: Iterable[str],
+        graph: nx.Graph | nx.MultiDiGraph | None = None,
+    ) -> "MatchMetrics":
+        """Calculate map matching evaluation metrics."""
+        return calculate_match_metrics(
+            ground_truth_edges=ground_truth_edges,
+            matched_edges=matched_edges,
+            graph=graph,
+        )
 
 
 def _calculate_total_length(
@@ -123,6 +139,7 @@ def calculate_match_metrics(
         precision=precision,
         recall=recall,
         f1_score=f1,
+        error_rate=1 - f1,
         accuracy=accuracy,
         newson_krumm_error=nk_error,
         matched_count=len(matched),
