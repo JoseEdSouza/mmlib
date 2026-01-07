@@ -79,7 +79,7 @@ class _BarefootPointPublisher:
         logger.debug(
             "Stopping Barefoot point publisher to %s:%s", self._host, self._port
         )
-        # Sinaliza fim
+        # Signal shutdown
         self._q.put(None)
         if self._thread is not None:
             # join can block; run in executor to avoid blocking the event loop

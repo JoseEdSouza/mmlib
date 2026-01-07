@@ -96,7 +96,7 @@ class GraphiumOfflineMatcher(BaseMatcher):
         session: requests.Session | None = None,
     ) -> _DetailedMatchResult:
         """
-        Map match com parâmetros extras (ex: startSegmentId).
+        Map match with extra parameters (e.g., startSegmentId).
 
         Returns:
             tuple: (MatchResult, last_segment_id, parsed_segments)

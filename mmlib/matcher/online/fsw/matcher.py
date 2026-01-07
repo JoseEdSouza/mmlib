@@ -31,7 +31,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         super().__init__()
         self.offline_matcher = offline_matcher
 
-        # Estado interno (inicializado no start())
+        # Internal state (initialized in start())
         if emit_every <= 0:
             raise MatcherConfigurationError("emit_every must be positive")
 
@@ -92,7 +92,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         buffer_len = len(points)
         for i in range(lookahead_depth + 1):
             start_idx = max(0, i * window_size)
-            # Lookahead windows pegam pontos futuros
+            # Lookahead windows include future points
             end_idx = min(
                 start_idx + window_size + (lookahead_depth - i) * (window_size // 2),
                 buffer_len,
@@ -149,7 +149,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
             if len(self._point_buffer) < self._window_size:
                 continue
 
-            # Cria janelas e processa com matcher offline
+            # Create windows and process with the offline matcher
             sequences = await self._run_windows(loop)
 
             self._current_window_id += 1
@@ -238,7 +238,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
 
     @staticmethod
     def _dedup_list[T](items: list[T]) -> list[T]:
-        """Remove duplicatas consecutivas de uma lista."""
+        """Remove consecutive duplicates from a list."""
         if not items:
             return []
 

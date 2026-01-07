@@ -2,21 +2,21 @@ from typing import TypedDict
 
 
 class _PointMessage(TypedDict):
-    id: str  # Identificador único do veículo/objeto
-    time: float  # Timestamp (geralmente milissegundos)
-    point: str  # Formato WKT: "POINT(longitude latitude)"
+    id: str  # Unique identifier for the vehicle/object
+    time: float  # Timestamp (usually milliseconds)
+    point: str  # WKT format: "POINT(longitude latitude)"
 
 
 class _Candidate(TypedDict):
     prob: float
-    route: str  # WKT MULTILINESTRING da rota percorrida
-    point: str  # WKT POINT da posição projetada na via
+    route: str  # WKT MULTILINESTRING of the traveled route
+    point: str  # WKT POINT for the position projected onto the road
 
 
 class _StateMessage(TypedDict):
     id: str
-    time: float  # Timestamp da última amostra
-    point: str  # WKT POINT (amostra original)
+    time: float  # Timestamp of the last sample
+    point: str  # WKT POINT (original sample)
     osm_id: int
     path_osm_ids: list[int]
     osm_type: str

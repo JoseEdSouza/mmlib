@@ -6,7 +6,7 @@ import time
 
 @dataclass(frozen=True)
 class BenchMetrics:
-    """Métricas consolidadas para processamento offline (batch)."""
+    """Consolidated metrics for offline (batch) processing."""
 
     execution_time_ms: float
     memory_peak_mb: float
@@ -40,7 +40,7 @@ class BenchMetrics:
 
 @dataclass(frozen=True)
 class PartialOnlineBenchMetrics:
-    """Métricas incrementais para cada 'yield' durante o stream."""
+    """Incremental metrics for each 'yield' during the stream."""
 
     step_latency_ms: float
     memory_mb: float
@@ -74,7 +74,7 @@ class PartialOnlineBenchMetrics:
 
 @dataclass(frozen=True)
 class OnlineBenchMetrics:
-    """Resumo consolidado de uma sessão completa de streaming."""
+    """Consolidated summary of a complete streaming session."""
 
     total_execution_time_ms: float
     avg_step_latency_ms: float

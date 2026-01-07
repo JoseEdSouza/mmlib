@@ -96,7 +96,7 @@ class BaseOnlineMatcher(ABC, BenchmarkMixin):
         self, points: AsyncIterable[GPSPoint]
     ) -> AsyncIterator[tuple[OnlineMatchResult, PartialOnlineBenchMetrics]]:
         """
-        Executa o matching em stream, emitindo métricas parciais por etapa.
+        Run stream matching, emitting partial metrics per step.
         Args:
             points (AsyncIterable[GPSPoint]): An async iterable of GPS points.
 
@@ -121,7 +121,7 @@ class BaseOnlineMatcher(ABC, BenchmarkMixin):
                 except StopAsyncIteration:
                     break
 
-                # Popula os índices consumidos desde o último yield
+                # Populate indices consumed since the last yield
                 indices.extend(range(last_yield_point_count, point_counter))
                 last_yield_point_count = point_counter
 

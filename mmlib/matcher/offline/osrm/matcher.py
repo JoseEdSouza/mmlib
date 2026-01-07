@@ -63,7 +63,7 @@ class OSRMMatcher(BaseMatcher):
             # matching -> legs -> steps -> name
             for leg in matching.get("legs", []):
                 for step in leg.get("steps", []):
-                    # O Way ID está no campo 'name'
+                    # The Way ID is in the 'name' field
                     way_id = step.get("name", "")
                     all_edge_ids.append(str(way_id))
 

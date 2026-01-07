@@ -49,7 +49,7 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
         self._enable_remainder_points = remainder_points
         self._remainder_points: list[GPSPoint] = []
 
-        # Estado acumulado
+        # Accumulated state
         self._committed_geometry: list[Coordinate] = []
         self._committed_segment_ids: list[str] = []
         self._committed_edge_ids: list[str] = []

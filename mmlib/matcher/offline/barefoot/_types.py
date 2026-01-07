@@ -11,7 +11,7 @@ class _BarefootGeoJSONResponse(TypedDict):
     type: str  # "MultiLineString"
     coordinates: List[
         List[List[float]]
-    ]  # Lista de linhas, onde cada linha é uma lista de [lon, lat]
+    ]  # List of lines, where each line is a list of [lon, lat]
     path_osm_ids: List[int]
 
 
