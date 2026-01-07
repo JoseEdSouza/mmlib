@@ -31,3 +31,13 @@ dev = [
     "pyright>=1.1.407",
     "ruff>=0.14.6",
 ]
+
+[tool.hatch.build]
+exclude = [
+  "/tests",
+  "/*.md",
+  "!/README.md",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["mmlib"]
