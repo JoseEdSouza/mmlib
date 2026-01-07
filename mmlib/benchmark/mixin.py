@@ -38,6 +38,7 @@ class BenchmarkMixin:
                 cpu_time_ms=end_metrics["cpu_time_ms"] - start_metrics["cpu_time_ms"],
                 timestamp=end_metrics["timestamp"],
                 custom_metadata={
+                    "run_id": getattr(self, "run_id", None),
                     "matcher_name": getattr(self, "matcher_name", "unknown"),
                     "mode": "offline",
                 },
@@ -74,6 +75,7 @@ class BenchmarkMixin:
                 input_points_indices=input_indices,
                 input_points_count=len(input_indices),
                 custom_metadata={
+                    "run_id": getattr(self, "run_id", None),
                     "matcher_name": getattr(self, "matcher_name", "unknown"),
                     "mode": "online",
                 },

@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import AsyncIterable, AsyncIterator, Self
+from uuid import uuid4
 
 from mmlib.exceptions import MatcherInputError, MatcherRuntimeError
 from mmlib.result import MatchResult, OnlineMatchResult
@@ -14,6 +15,17 @@ from mmlib.benchmark import (
 
 class BaseMatcher(ABC, BenchmarkMixin):
     """BaseMatcher is a base class for map matching implementations."""
+
+    @property
+    def run_id(self) -> str:
+        """An optional run identifier for benchmarking purposes."""
+        if getattr(self, "_run_id", None) is None:
+            self._run_id = uuid4().hex
+        return self._run_id
+
+    @run_id.setter
+    def run_id(self, value: str) -> None:
+        self._run_id = value
 
     @property
     @abstractmethod
@@ -33,7 +45,10 @@ class BaseMatcher(ABC, BenchmarkMixin):
         """
         ...
 
-    def bench_match(self, points: list[GPSPoint]) -> tuple[MatchResult, BenchMetrics]:
+    def bench_match(
+        self,
+        points: list[GPSPoint],
+    ) -> tuple[MatchResult, BenchMetrics]:
         """
         Execute map matching while collecting global performance metrics.
 
@@ -51,6 +66,17 @@ class BaseOnlineMatcher(ABC, BenchmarkMixin):
     def __init__(self) -> None:
         super().__init__()
         self._started: bool = False
+
+    @property
+    def run_id(self) -> str:
+        """An optional run identifier for benchmarking purposes."""
+        if getattr(self, "_run_id", None) is None:
+            self._run_id = uuid4().hex
+        return self._run_id
+
+    @run_id.setter
+    def run_id(self, value: str) -> None:
+        self._run_id = value
 
     @property
     @abstractmethod
@@ -213,6 +239,7 @@ class BaseOnlineMatcher(ABC, BenchmarkMixin):
             total_execution_time_ms=total_execution_time_ms,
             total_cpu_time_ms=total_cpu_time_ms,
             custom_metadata={
+                "run_id": self.run_id,
                 "matcher_name": self.matcher_name,
                 "mode": "online",
                 "n_input_points": len(points),

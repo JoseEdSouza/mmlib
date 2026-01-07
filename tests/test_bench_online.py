@@ -102,6 +102,8 @@ async def test_online_bench():
     assert df.attrs["matcher_name"] == "mock_online"
     assert df.attrs["mode"] == "online"
     assert "throughput_in_pps" in df.attrs
+    assert "run_id" in df.attrs
+    assert len(df.attrs["run_id"]) == 32  # uuid4 hex length
 
     print("\nOnline benchmark verification passed!")
 

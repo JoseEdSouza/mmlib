@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Any, cast
+from uuid import uuid4
 import pandas as pd
 import time
 
@@ -7,7 +8,6 @@ import time
 @dataclass(frozen=True)
 class BenchMetrics:
     """Consolidated metrics for offline (batch) processing."""
-
     execution_time_ms: float
     memory_peak_mb: float
     cpu_time_ms: float
@@ -23,6 +23,7 @@ class BenchMetrics:
     def to_df(self) -> pd.DataFrame:
         """Export metrics to a Pandas DataFrame."""
         data = {
+            "run_id": self.custom_metadata.get("run_id", uuid4().hex),
             "matcher_name": self.custom_metadata.get("matcher_name", "unknown"),
             "mode": self.custom_metadata.get("mode", "offline"),
             "execution_time_ms": [self.execution_time_ms],
@@ -207,7 +208,7 @@ class OnlineBenchMetrics:
         df = pd.DataFrame(rows)
 
         meta = self.custom_metadata
-        run_id = meta.get("run_id", "unknown")
+        run_id = meta.get("run_id", uuid4().hex)
         matcher_name = meta.get("matcher_name", "unknown")
         mode = meta.get("mode", "online")
 

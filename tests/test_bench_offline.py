@@ -42,6 +42,8 @@ def test_offline_bench():
 
     assert metrics.execution_time_ms >= 500
     assert metrics.memory_peak_mb > 0
+    assert "run_id" in df.columns
+    assert len(df["run_id"].iloc[0]) == 32
     print("\nOffline benchmark test passed!")
 
 
