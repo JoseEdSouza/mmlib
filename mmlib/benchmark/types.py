@@ -143,90 +143,113 @@ class OnlineBenchMetrics:
             },
         )
 
-    def to_df(self, expand_summary: bool = False) -> pd.DataFrame:
+    def to_summary_row(self) -> dict[str, Any]:
         """
-        Export partial metrics to a Pandas DataFrame.
+        Return a single-row, run-level summary (ideal for tables/aggregation).
 
-        Args:
-            expand_summary: If True, attach global summary metrics to df.attrs
-                          (total_execution_time_ms, avg_step_latency_ms, etc.).
-                          If False, only per-step metrics are included in the DataFrame.
-
-        Returns:
-            DataFrame with per-step metrics and derived columns (step_index,
-            inter_arrival_ms, cum_points, throughput_in_pps, etc.).
+        Conventions:
+          - Identifiers (run_id, matcher_name, mode, trajectory_id, dataset_id, etc.)
+            are copied from custom_metadata if present.
+          - Throughput is computed from total_points_processed / total_execution_time_ms.
+          - Resource metrics are client-side unless resource_scope says otherwise.
         """
-        # Build base table
-        rows = [m.to_dict() for m in self.partial_metrics]
-        df = pd.DataFrame(rows)
+        meta = self.custom_metadata
 
-        matcher_name = self.custom_metadata.get("matcher_name", "unknown")
-        mode = self.custom_metadata.get("mode", "online")
-
-        if df.empty:
-            # Still return an empty DF with useful metadata
-            df.attrs["matcher_name"] = matcher_name
-            df.attrs["mode"] = mode
-            if expand_summary:
-                for k, v in self._summary_attrs().items():
-                    df.attrs[k] = v
-            return df
-
-        # --- Ensure identifier columns ---
-        df["matcher_name"] = matcher_name
-        df["mode"] = mode
-
-        # --- Derived columns (per-row) ---
-        df = cast(pd.DataFrame, df.reset_index(drop=True))
-        df["step_index"] = df.index.astype(int)
-
-        # Inter-arrival (uses wall-clock timestamp; good for burstiness diagnostics)
-        # If timestamps are missing or non-numeric, this will fail loudly (good).
-        df["inter_arrival_ms"] = df["timestamp"].diff() * 1000.0
-        df.loc[df["step_index"] == 0, "inter_arrival_ms"] = pd.NA
-
-        # Points per step (already provided as input_points_count, but keep a stable alias)
-        if "input_points_count" in df.columns:
-            df["points_per_step"] = df["input_points_count"]
-        else:
-            # fallback for older schemas
-            df["points_per_step"] = pd.NA
-
-        # Cumulative points processed so far (based on what the wrapper attributed to each yield)
-        # This is very useful when outputs are batched.
-        df["cum_points"] = (
-            cast(pd.Series, pd.to_numeric(df["points_per_step"], errors="coerce"))
-            .fillna(0)
-            .cumsum()
-        )
-
-        # Cumulative "wait time for outputs" (sum of step latencies). Note: not identical to total_execution_time_ms
-        if "step_latency_ms" in df.columns:
-            df["cum_step_latency_ms"] = (
-                cast(pd.Series, pd.to_numeric(df["step_latency_ms"], errors="coerce"))
-                .fillna(0)
-                .cumsum()
-            )
-        else:
-            df["cum_step_latency_ms"] = pd.NA
-
-        # --- Derived columns (global, repeated) ---
         exec_s = (
             self.total_execution_time_ms / 1000.0
             if self.total_execution_time_ms > 0
             else 0.0
         )
         throughput_in_pps = (
-            (self.total_points_processed / exec_s) if exec_s > 0 else pd.NA
+            (self.total_points_processed / exec_s) if exec_s > 0 else 0.0
         )
 
-        df["total_execution_time_ms"] = self.total_execution_time_ms
-        df["total_cpu_time_ms"] = self.total_cpu_time_ms
-        df["throughput_in_pps"] = throughput_in_pps
-        df["avg_points_per_step"] = self.avg_points_per_step
+        # Keep only *useful* identifiers (avoid dumping all meta_* keys by default).
+        # You can expand this allowlist as your experiment schema grows.
+        id_keys = (
+            "run_id",
+            "experiment_id",
+            "trajectory_id",
+            "dataset_id",
+            "k_factor",
+            "lag_points",
+            "sampling_hz",
+            "seed",
+            "matcher_name",
+            "mode",
+        )
+        ids: dict[str, Any] = {k: meta[k] for k in id_keys if k in meta}
 
-        # Put key columns first
+        return {
+            **ids,
+            "total_execution_time_ms": self.total_execution_time_ms,
+            "total_cpu_time_ms": self.total_cpu_time_ms,
+            "max_memory_peak_mb": self.max_memory_peak_mb,
+            "total_points_processed": self.total_points_processed,
+            "total_results_yielded": self.total_results_yielded,
+            "avg_step_latency_ms": self.avg_step_latency_ms,
+            "avg_points_per_step": self.avg_points_per_step,
+            "throughput_in_pps": throughput_in_pps,
+            # Keep metric semantics so you can merge server-side later
+            "resource_scope": meta.get("resource_scope", "client"),
+            "cpu_metric": meta.get("cpu_metric", "cpu_time_milliseconds"),
+            "memory_metric": meta.get("memory_metric", "rss_mb"),
+        }
+
+    def to_df(self, expand_summary: bool = False) -> pd.DataFrame:
+        """
+        Export per-step metrics to a Pandas DataFrame.
+
+        Keeps enough identifiers as columns for easy concat/plot.
+        Stores run-level summary in df.attrs (optional), not repeated per row.
+        """
+        rows = [m.to_dict() for m in self.partial_metrics]
+        df = pd.DataFrame(rows)
+
+        meta = self.custom_metadata
+        run_id = meta.get("run_id", "unknown")
+        matcher_name = meta.get("matcher_name", "unknown")
+        mode = meta.get("mode", "online")
+
+        if df.empty:
+            df.attrs["run_id"] = run_id
+            df.attrs["matcher_name"] = matcher_name
+            df.attrs["mode"] = mode
+            if expand_summary:
+                for k, v in self.to_summary_row().items():
+                    df.attrs[k] = v
+            return df
+
+        df = cast(pd.DataFrame, df.reset_index(drop=True))
+        df["run_id"] = run_id
+        df["matcher_name"] = matcher_name
+        df["mode"] = mode
+        df["step_index"] = df.index.astype(int)
+
+        # Derived per-step diagnostics (useful for batching/burstiness)
+        df["inter_arrival_ms"] = df["timestamp"].diff() * 1000.0
+        df.loc[df["step_index"] == 0, "inter_arrival_ms"] = pd.NA
+
+        df["points_per_step"] = df["input_points_count"]
+        df["cum_points"] = (
+            cast(pd.Series, pd.to_numeric(df["points_per_step"], errors="coerce"))
+            .fillna(0)
+            .cumsum()
+        )
+
+        # Drop redundant columns / noisy meta_* columns to avoid wide DF
+        drop_cols = ["input_points_count"]
+        for c in drop_cols:
+            if c in df.columns:
+                df.drop(columns=[c], inplace=True)
+
+        meta_cols = [c for c in df.columns if c.startswith("meta_")]
+        if meta_cols:
+            df.drop(columns=meta_cols, inplace=True)
+
+        # Column order
         front = [
+            "run_id",
             "matcher_name",
             "mode",
             "step_index",
@@ -235,33 +258,15 @@ class OnlineBenchMetrics:
             "inter_arrival_ms",
             "points_per_step",
             "cum_points",
-            "cum_step_latency_ms",
+            "memory_mb",
+            "cpu_time_ms",  # optional but kept here as diagnostic
         ]
         existing_front = [c for c in front if c in df.columns]
         rest = [c for c in df.columns if c not in existing_front]
         df = cast(pd.DataFrame, df.loc[:, existing_front + rest])
 
-        # Attach summary attrs if requested
         if expand_summary:
-            for k, v in self._summary_attrs().items():
+            for k, v in self.to_summary_row().items():
                 df.attrs[k] = v
 
         return df
-
-    def _summary_attrs(self) -> dict[str, Any]:
-        """Helper: consistent summary attrs for DataFrame export."""
-        return {
-            "total_execution_time_ms": self.total_execution_time_ms,
-            "avg_step_latency_ms": self.avg_step_latency_ms,
-            "max_memory_peak_mb": self.max_memory_peak_mb,
-            "total_points_processed": self.total_points_processed,
-            "total_results_yielded": self.total_results_yielded,
-            "avg_points_per_step": self.avg_points_per_step,
-            "resource_scope": self.custom_metadata.get("resource_scope", "client"),
-            "cpu_metric": self.custom_metadata.get(
-                "cpu_metric", "cpu_time_milliseconds"
-            ),
-            "memory_metric": self.custom_metadata.get("memory_metric", "rss_mb"),
-            "matcher_name": self.custom_metadata.get("matcher_name", "unknown"),
-            "mode": self.custom_metadata.get("mode", "online"),
-        }

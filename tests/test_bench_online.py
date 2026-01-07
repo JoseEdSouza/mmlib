@@ -67,6 +67,7 @@ async def test_online_bench():
 
     # Verify mandatory columns
     expected_cols = [
+        "run_id",
         "matcher_name",
         "mode",
         "step_index",
@@ -75,14 +76,15 @@ async def test_online_bench():
         "inter_arrival_ms",
         "points_per_step",
         "cum_points",
-        "cum_step_latency_ms",
-        "total_execution_time_ms",
-        "total_cpu_time_ms",
-        "throughput_in_pps",
-        "avg_points_per_step",
+        "memory_mb",
+        "cpu_time_ms",
     ]
     for col in expected_cols:
         assert col in df.columns, f"Column {col} missing from DataFrame"
+
+    # Verify dropped columns
+    assert "input_points_count" not in df.columns
+    assert not any(c.startswith("meta_") for c in df.columns)
 
     # Verify values
     assert df["step_index"].tolist() == [0, 1, 2]
@@ -99,9 +101,12 @@ async def test_online_bench():
     assert df.attrs["total_points_processed"] == 3
     assert df.attrs["matcher_name"] == "mock_online"
     assert df.attrs["mode"] == "online"
+    assert "throughput_in_pps" in df.attrs
 
     print("\nOnline benchmark verification passed!")
 
 
 if __name__ == "__main__":
+    import asyncio
+
     asyncio.run(test_online_bench())
