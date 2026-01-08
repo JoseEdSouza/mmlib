@@ -1,5 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable
+from uuid import uuid4
 import networkx as nx
 
 
@@ -26,6 +27,8 @@ class MatchMetrics:
     total_added_length: float | None = None
     total_missing_length: float | None = None
 
+    run_id: str = field(default_factory=lambda: uuid4().hex)
+
     # Based on spatio-temporal-trajectory-simplification-for-inferring-travel-paths li et. al. 2014
     @property
     def error_rate(self) -> float:
@@ -35,6 +38,7 @@ class MatchMetrics:
     def to_dict(self) -> dict[str, Any]:
         """Convert metrics to a dictionary."""
         return {
+            "run_id": self.run_id,
             "precision": self.precision,
             "recall": self.recall,
             "f1_score": self.f1_score,
@@ -54,10 +58,12 @@ class MatchMetrics:
     def calculate(
         ground_truth_edges: Iterable[str],
         matched_edges: Iterable[str],
+        run_id: str | None = None,
         graph: nx.Graph | nx.MultiDiGraph | None = None,
     ) -> "MatchMetrics":
         """Calculate map matching evaluation metrics."""
         return calculate_match_metrics(
+            run_id=run_id,
             ground_truth_edges=ground_truth_edges,
             matched_edges=matched_edges,
             graph=graph,
@@ -74,6 +80,7 @@ def _calculate_total_length(
 def calculate_match_metrics(
     ground_truth_edges: Iterable[str],
     matched_edges: Iterable[str],
+    run_id: str | None = None,
     graph: nx.Graph | nx.MultiDiGraph | None = None,
 ) -> MatchMetrics:
     """
@@ -140,6 +147,7 @@ def calculate_match_metrics(
             nk_error = 0.0 if not mm_set else float("inf")
 
     return MatchMetrics(
+        run_id=run_id or uuid4().hex,
         precision=precision,
         recall=recall,
         f1_score=f1,

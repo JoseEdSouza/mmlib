@@ -235,6 +235,7 @@ class BaseOnlineMatcher(ABC, BenchmarkMixin):
             ttff_ms = (first_output_perf - t0) * 1000
 
         summary = OnlineBenchMetrics.from_partials(
+            run_id=self.run_id,
             partials=partial_results,
             total_execution_time_ms=total_execution_time_ms,
             total_cpu_time_ms=total_cpu_time_ms,
@@ -245,7 +246,6 @@ class BaseOnlineMatcher(ABC, BenchmarkMixin):
                 "n_input_points": len(points),
                 "memory_peak_sampled_mb": peak_mem,
                 "ttff_ms": ttff_ms,
-                # Diagnósticos úteis:
                 "n_emissions": len(partial_results),
             },
         )

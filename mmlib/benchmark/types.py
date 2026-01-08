@@ -8,9 +8,11 @@ import time
 @dataclass(frozen=True)
 class BenchMetrics:
     """Consolidated metrics for offline (batch) processing."""
+
     execution_time_ms: float
     memory_peak_mb: float
     cpu_time_ms: float
+    run_id: str = field(default_factory=lambda: uuid4().hex)
     timestamp: float = field(default_factory=time.time)
     custom_metadata: dict[str, Any] = field(
         default_factory=lambda: {
@@ -23,7 +25,7 @@ class BenchMetrics:
     def to_df(self) -> pd.DataFrame:
         """Export metrics to a Pandas DataFrame."""
         data = {
-            "run_id": self.custom_metadata.get("run_id", uuid4().hex),
+            "run_id": self.run_id,
             "matcher_name": self.custom_metadata.get("matcher_name", "unknown"),
             "mode": self.custom_metadata.get("mode", "offline"),
             "execution_time_ms": [self.execution_time_ms],
@@ -78,6 +80,7 @@ class OnlineBenchMetrics:
     max_memory_peak_mb: float
     total_points_processed: int
     total_results_yielded: int
+    run_id: str = field(default_factory=lambda: uuid4().hex)
     partial_metrics: list["PartialOnlineBenchMetrics"] = field(default_factory=list)
     total_cpu_time_ms: float | None = None
     custom_metadata: dict[str, Any] = field(
@@ -110,6 +113,7 @@ class OnlineBenchMetrics:
         cls,
         partials: list[PartialOnlineBenchMetrics],
         total_execution_time_ms: float,
+        run_id: str | None = None,
         total_cpu_time_ms: float | None = None,
         custom_metadata: dict[str, Any] | None = None,
     ) -> "OnlineBenchMetrics":
@@ -129,6 +133,7 @@ class OnlineBenchMetrics:
         )
 
         return cls(
+            run_id=run_id or uuid4().hex,
             total_execution_time_ms=total_execution_time_ms,
             total_cpu_time_ms=total_cpu_time_ms,
             avg_step_latency_ms=avg_latency,
@@ -168,7 +173,6 @@ class OnlineBenchMetrics:
         # Keep only *useful* identifiers (avoid dumping all meta_* keys by default).
         # You can expand this allowlist as your experiment schema grows.
         id_keys = (
-            "run_id",
             "experiment_id",
             "trajectory_id",
             "dataset_id",
@@ -183,6 +187,7 @@ class OnlineBenchMetrics:
 
         return {
             **ids,
+            "run_id": self.run_id,
             "total_execution_time_ms": self.total_execution_time_ms,
             "total_cpu_time_ms": self.total_cpu_time_ms,
             "max_memory_peak_mb": self.max_memory_peak_mb,
@@ -208,12 +213,11 @@ class OnlineBenchMetrics:
         df = pd.DataFrame(rows)
 
         meta = self.custom_metadata
-        run_id = meta.get("run_id", uuid4().hex)
         matcher_name = meta.get("matcher_name", "unknown")
         mode = meta.get("mode", "online")
 
         if df.empty:
-            df.attrs["run_id"] = run_id
+            df.attrs["run_id"] = self.run_id
             df.attrs["matcher_name"] = matcher_name
             df.attrs["mode"] = mode
             if expand_summary:
@@ -222,7 +226,7 @@ class OnlineBenchMetrics:
             return df
 
         df = cast(pd.DataFrame, df.reset_index(drop=True))
-        df["run_id"] = run_id
+        df["run_id"] = self.run_id
         df["matcher_name"] = matcher_name
         df["mode"] = mode
         df["step_index"] = df.index.astype(int)
