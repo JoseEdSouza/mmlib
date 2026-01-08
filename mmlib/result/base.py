@@ -25,7 +25,12 @@ class BaseMatchResult(ABC):
         df = pd.DataFrame(
             {
                 "matcher_name": [self.matcher_name],
-                "measurement_points": [[p.as_tuple for p in self.measurement_points]],
+                "measurement_points": [
+                    [
+                        (lat, lon, ts.isoformat())
+                        for (lat, lon, ts) in self.measurement_points
+                    ]
+                ],
                 "matched_points": [[p.as_tuple for p in self.matched_points]],
                 "edge_ids": [[self.edge_ids]],
             }
