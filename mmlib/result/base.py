@@ -1,6 +1,7 @@
 from abc import ABC
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 import folium
 import networkx as nx
@@ -15,6 +16,7 @@ class BaseMatchResult(ABC):
     """Base class for map matching results."""
 
     matcher_name: str
+    run_id: str = field(default_factory=lambda: uuid4().hex)
     measurement_points: list[GPSPoint] = field(default_factory=list)
     matched_points: list[Coordinate] = field(default_factory=list)
     edge_ids: list[str] = field(default_factory=list)
@@ -24,6 +26,7 @@ class BaseMatchResult(ABC):
 
         df = pd.DataFrame(
             {
+                "run_id": [self.run_id],
                 "matcher_name": [self.matcher_name],
                 "measurement_points": [
                     [
@@ -128,6 +131,9 @@ class BaseMatchResult(ABC):
         """
         Calculate map matching evaluation metrics.
         """
+        if run_id is None and hasattr(self, "run_id"):
+            run_id = getattr(self, "run_id")
+
         return calculate_match_metrics(
             run_id=run_id,
             ground_truth_edges=ground_truth_edge_ids,

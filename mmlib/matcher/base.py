@@ -57,6 +57,8 @@ class BaseMatcher(ABC, BenchmarkMixin):
         """
         with self._measure_offline():
             result = self.match(points)
+            if hasattr(result, "run_id"):
+                result.run_id = self.run_id
         return result, self._get_last_metrics()
 
 
@@ -144,6 +146,8 @@ class BaseOnlineMatcher(ABC, BenchmarkMixin):
             with self._measure_online_step() as indices:
                 try:
                     result = await anext(matcher_stream)
+                    if hasattr(result, "run_id"):
+                        result.run_id = self.run_id
                 except StopAsyncIteration:
                     break
 
