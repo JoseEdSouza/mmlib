@@ -122,12 +122,14 @@ class BaseMatchResult(ABC):
     def calculate_metrics(
         self,
         ground_truth_edge_ids: list[str],
+        run_id: str | None = None,
         graph: nx.Graph | nx.MultiDiGraph | None = None,
     ) -> MatchMetrics:
         """
         Calculate map matching evaluation metrics.
         """
         return calculate_match_metrics(
+            run_id=run_id,
             ground_truth_edges=ground_truth_edge_ids,
             matched_edges=self.edge_ids,
             graph=graph,
