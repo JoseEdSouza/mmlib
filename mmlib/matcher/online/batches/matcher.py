@@ -1,6 +1,6 @@
 import asyncio
 from concurrent.futures import Executor, ThreadPoolExecutor
-from typing import AsyncIterable, AsyncIterator, override
+from typing import AsyncIterable, AsyncIterator, Final, override
 
 from mmlib.exceptions import MatcherConfigurationError, MatcherRuntimeError
 from mmlib.matcher.base import BaseMatcher, BaseOnlineMatcher
@@ -13,16 +13,19 @@ from mmlib.utils import factory
 class BatchesOnlineMatcher(BaseOnlineMatcher):
     """Simple batch-based online matcher without lookahead or windowing."""
 
+    _base_matcher_name: Final[str] = "batchers_online"
+
     @property
     @override
     def matcher_name(self) -> str:
-        return "Batches-Online"
+        return f"{self._base_matcher_name}({self.offline_matcher.matcher_name})"
 
     def __init__(
         self,
         offline_matcher: BaseMatcher,
         *,
         batch_size: int = 100,
+        final_min_batch_size: int = 5,
     ):
         super().__init__()
         self.offline_matcher = offline_matcher
@@ -30,7 +33,11 @@ class BatchesOnlineMatcher(BaseOnlineMatcher):
         if batch_size <= 0:
             raise MatcherConfigurationError("batch_size must be positive")
 
+        if final_min_batch_size <= 0:
+            raise MatcherConfigurationError("final_min_batch_size must be positive")
+
         self._batch_size = batch_size
+        self._final_min_batch_size = final_min_batch_size
 
         # Buffers to hold current batch and committed results
         self._current_batch: list[GPSPoint] = []
@@ -126,7 +133,7 @@ class BatchesOnlineMatcher(BaseOnlineMatcher):
                 self._current_batch.clear()
 
         # Process remaining points (final flush)
-        if self._current_batch:
+        if len(self._current_batch) >= self._final_min_batch_size:
             result = await self._process_batch(self._current_batch, loop)
 
             if result.edge_ids:

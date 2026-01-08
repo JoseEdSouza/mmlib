@@ -21,6 +21,11 @@ class OSRMMatcher(BaseMatcher):
 
     _matcher_name: Final[str] = "osrm"
 
+    @property
+    @override
+    def matcher_name(self) -> str:
+        return self._matcher_name
+
     def __init__(
         self,
         base_url: str,
@@ -31,9 +36,6 @@ class OSRMMatcher(BaseMatcher):
         self._profile = profile
         self._timeout = timeout
 
-    @property
-    def matcher_name(self) -> str:
-        return self._matcher_name
 
     @override
     def match(self, points: list[GPSPoint]) -> MatchResult:

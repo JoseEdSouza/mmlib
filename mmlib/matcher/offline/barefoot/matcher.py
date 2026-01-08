@@ -1,7 +1,7 @@
 import json
 import socket
 import logging
-from typing import Final, Optional, cast
+from typing import Final, Optional, cast, override
 
 from mmlib.matcher.base import BaseMatcher
 from mmlib.matcher.offline.barefoot._types import (
@@ -21,6 +21,11 @@ class BarefootOfflineMatcher(BaseMatcher):
 
     _matcher_name: Final[str] = "barefoot_offline"
 
+    @property
+    @override
+    def matcher_name(self) -> str:
+        return self._matcher_name
+
     def __init__(
         self,
         host: str = "localhost",
@@ -37,6 +42,7 @@ class BarefootOfflineMatcher(BaseMatcher):
             vehicle_id = str(uuid.uuid4())
         self._vehicle_id = vehicle_id
 
+    @override
     def match(self, points: list[GPSPoint]) -> MatchResult:
         payload = self._prepare_payload(points)
         response_data = self._send_request(payload)
@@ -55,17 +61,13 @@ class BarefootOfflineMatcher(BaseMatcher):
                     matched_points.append(coord)
 
         return MatchResult(
-            matcher_name=self._matcher_name,
+            matcher_name=self.matcher_name,
             measurement_points=[
                 GPSPoint(pt.coordinate.lat, pt.coordinate.lon, pt.time) for pt in points
             ],
             matched_points=matched_points,
             edge_ids=edge_ids,
         )
-
-    @property
-    def matcher_name(self) -> str:
-        return self._matcher_name
 
     def _prepare_payload(self, points: list[GPSPoint]) -> str:
         samples: list[_Sample] = []

@@ -49,6 +49,12 @@ class GraphiumOfflineMatcher(BaseMatcher):
     Offline matcher using the Graphium API.
     """
 
+    @property
+    @override
+    def matcher_name(self) -> str:
+        """The name of the matcher."""
+        return "graphium_offline"
+
     def __init__(
         self,
         base_url: str,
@@ -76,10 +82,6 @@ class GraphiumOfflineMatcher(BaseMatcher):
         }
         self._url = f"{self._base_url}/matching/graphs/{self._graph_name}/versions/{self._version}/matchtrack"
 
-    @property
-    def matcher_name(self) -> str:
-        """The name of the matcher."""
-        return "GraphiumOfflineMatcher"
 
     @override
     def match(self, points: list[GPSPoint]) -> MatchResult:

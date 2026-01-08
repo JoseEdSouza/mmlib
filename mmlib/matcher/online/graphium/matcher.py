@@ -1,6 +1,6 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from typing import AsyncIterable, AsyncIterator, Final
+from typing import AsyncIterable, AsyncIterator, Final, override
 
 import requests
 
@@ -56,6 +56,7 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
         self._all_points: list[GPSPoint] = []
 
     @property
+    @override
     def matcher_name(self) -> str:
         return self._matcher_name
 

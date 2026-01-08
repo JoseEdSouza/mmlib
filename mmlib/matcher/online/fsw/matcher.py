@@ -14,10 +14,12 @@ from mmlib.utils import factory
 class FixedSlidingWindowMatcher(BaseOnlineMatcher):
     """FSW (Fixed Sliding Window) with fixed-lag lookahead online matcher."""
 
+    _base_matcher_name: str = "FSW"
+
     @property
     @override
     def matcher_name(self) -> str:
-        return "FSW-FixedLag-Online"
+        return f"{self._base_matcher_name}({self.offline_matcher.matcher_name})"
 
     def __init__(
         self,

@@ -1,5 +1,5 @@
 import json
-from typing import Any, Final
+from typing import Any, Final, override
 
 import polyline
 import requests
@@ -16,6 +16,11 @@ class GraphHopperMatcher(BaseMatcher):
 
     _matcher_name: Final[str] = "graphhopper"
 
+    @property
+    @override
+    def matcher_name(self) -> str:
+        return self._matcher_name
+
     def __init__(
         self,
         base_url: str,
@@ -28,17 +33,14 @@ class GraphHopperMatcher(BaseMatcher):
         self._profile = profile
         self._locale = locale
 
-    @property
-    def matcher_name(self) -> str:
-        return self._matcher_name
-
+    @override
     def match(self, points: list[GPSPoint]) -> MatchResult:
         gpx_points = to_gpx(points)
         response = self._request(gpx_points)
         res_points = polyline.decode(response["points"])
         edge_ids = [str(edge) for (_, __, edge) in response["edge_ids"]]
         return MatchResult(
-            matcher_name="GraphHopper",
+            matcher_name=self.matcher_name,
             measurement_points=[GPSPoint(lat, lon, time) for lat, lon, time in points],
             matched_points=[Coordinate(lat, lon) for lat, lon in res_points],
             edge_ids=edge_ids,

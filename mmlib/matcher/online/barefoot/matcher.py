@@ -28,6 +28,11 @@ class BarefootOnlineMatcher(BaseOnlineMatcher):
 
     _matcher_name: Final[str] = "barefoot_online"
 
+    @property
+    @override
+    def matcher_name(self) -> str:
+        return self._matcher_name
+
     def __init__(
         self,
         pub_host: str = "localhost",
@@ -55,9 +60,6 @@ class BarefootOnlineMatcher(BaseOnlineMatcher):
         self._last_sent_time_ms: float | None = None
         self._last_received_time_ms: int | None = None
 
-    @property
-    def matcher_name(self) -> str:
-        return self._matcher_name
 
     @override
     async def start(self) -> None:
