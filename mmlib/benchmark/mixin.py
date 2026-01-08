@@ -33,6 +33,7 @@ class BenchmarkMixin:
             peak_mem = max(start_metrics["memory_mb"], end_metrics["memory_mb"])
 
             metrics = BenchMetrics(
+                run_id=getattr(self, "run_id", "unknown"),
                 execution_time_ms=(t1 - t0) * 1000,
                 memory_peak_mb=peak_mem,
                 cpu_time_ms=end_metrics["cpu_time_ms"] - start_metrics["cpu_time_ms"],
@@ -68,6 +69,7 @@ class BenchmarkMixin:
             end_metrics = collect_process_metrics()
 
             self._last_partial = PartialOnlineBenchMetrics(
+                run_id=getattr(self, "run_id", "unknown"),
                 step_latency_ms=(t1 - t0) * 1000,
                 memory_mb=end_metrics["memory_mb"],
                 cpu_time_ms=end_metrics["cpu_time_ms"] - start_metrics["cpu_time_ms"],

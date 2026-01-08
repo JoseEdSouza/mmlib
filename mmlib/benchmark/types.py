@@ -49,6 +49,7 @@ class PartialOnlineBenchMetrics:
     timestamp: float = field(default_factory=time.time)
     input_points_indices: list[int] = field(default_factory=list)
     input_points_count: int = 0
+    run_id: str = field(default_factory=lambda: uuid4().hex)
     custom_metadata: dict[str, Any] = field(
         default_factory=lambda: {
             "resource_scope": "client",
@@ -60,6 +61,7 @@ class PartialOnlineBenchMetrics:
     def to_dict(self) -> dict[str, Any]:
         """Convert to a flat dictionary for DataFrame inclusion."""
         d = {
+            "run_id": self.run_id,
             "step_latency_ms": self.step_latency_ms,
             "cpu_time_ms": self.cpu_time_ms,
             "memory_mb": self.memory_mb,
