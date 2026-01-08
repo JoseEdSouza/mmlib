@@ -12,9 +12,6 @@ class MatchMetrics:
     f1_score: float
     accuracy: float
 
-    # Based on spatio-temporal-trajectory-simplification-for-inferring-travel-paths li et. al. 2014
-    error_rate: float
-
     # Based on hidden-markov-map-matching-through-noise-and-sparseness newson & krumm 2009
     newson_krumm_error: float | None = None
 
@@ -29,12 +26,19 @@ class MatchMetrics:
     total_added_length: float | None = None
     total_missing_length: float | None = None
 
+    # Based on spatio-temporal-trajectory-simplification-for-inferring-travel-paths li et. al. 2014
+    @property
+    def error_rate(self) -> float:
+        """Calculate the error rate as 1 - F1 Score."""
+        return 1.0 - self.f1_score
+
     def to_dict(self) -> dict[str, Any]:
         """Convert metrics to a dictionary."""
         return {
             "precision": self.precision,
             "recall": self.recall,
             "f1_score": self.f1_score,
+            "error_rate": self.error_rate,
             "accuracy": self.accuracy,
             "newson_krumm_error": self.newson_krumm_error,
             "matched_count": self.matched_count,
@@ -139,7 +143,6 @@ def calculate_match_metrics(
         precision=precision,
         recall=recall,
         f1_score=f1,
-        error_rate=1 - f1,
         accuracy=accuracy,
         newson_krumm_error=nk_error,
         matched_count=len(matched),
