@@ -65,11 +65,21 @@ class BarefootOnlineMatcher(BaseOnlineMatcher):
             await self._comm.__aenter__()
             self._started = True
 
+        # Reset state for reusability
+        self._result = OnlineMatchResult(matcher_name=self._matcher_name)
+        self._sync = _Synchronizer(max_inflight=1)
+        self._last_sent_time_ms = None
+        self._last_received_time_ms = None
+
     @override
     async def stop(self) -> None:
         if self._started:
             await self._comm.__aexit__(None, None, None)
             self._started = False
+
+        # Clear state
+        self._last_sent_time_ms = None
+        self._last_received_time_ms = None
 
     @override
     async def match_stream(

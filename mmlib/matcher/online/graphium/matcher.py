@@ -64,13 +64,15 @@ class GraphiumOnlineMatcher(BaseOnlineMatcher):
         if not self._started:
             self._executor = ThreadPoolExecutor(max_workers=1)
             self._session = requests.Session()
-            self._points_buffer.clear()
-            self._all_points.clear()
-            self._committed_geometry.clear()
-            self._committed_segment_ids.clear()
-            self._committed_edge_ids.clear()
-            self._remainder_points.clear()
             self._started = True
+
+        # Reset state for reusability
+        self._points_buffer.clear()
+        self._all_points.clear()
+        self._committed_geometry.clear()
+        self._committed_segment_ids.clear()
+        self._committed_edge_ids.clear()
+        self._remainder_points.clear()
 
     async def stop(self) -> None:
         """Clean up resources."""

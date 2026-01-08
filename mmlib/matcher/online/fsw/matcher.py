@@ -57,17 +57,18 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
     @override
     async def start(self) -> None:
         """Initialize buffers and state of the FSW."""
-        if self._started:
-            return
-        self._executor: Executor = ThreadPoolExecutor(
-            max_workers=self._lookahead_depth or 1
-        )
+        if not self._started:
+            self._executor: Executor = ThreadPoolExecutor(
+                max_workers=self._lookahead_depth or 1
+            )
+            self._started = True
+
+        # Reset state for reusability
         self._all_points.clear()
         self._point_buffer.clear()
         self._committed_path.clear()
         self._committed_coordinates.clear()
         self._current_window_id = 0
-        self._started = True
 
     @override
     async def stop(self) -> None:
@@ -75,6 +76,7 @@ class FixedSlidingWindowMatcher(BaseOnlineMatcher):
         if not self._started:
             return
         self._executor.shutdown(wait=True)
+        self._all_points.clear()
         self._point_buffer.clear()
         self._committed_path.clear()
         self._committed_coordinates.clear()

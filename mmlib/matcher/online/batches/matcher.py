@@ -41,16 +41,16 @@ class BatchesOnlineMatcher(BaseOnlineMatcher):
     @override
     async def start(self) -> None:
         """Initialize buffers and executor."""
-        if self._started:
-            return
+        if not self._started:
+            # Create a thread pool executor for processing batches
+            self._executor: Executor = ThreadPoolExecutor(max_workers=1)
+            self._started = True
 
-        # Create a thread pool executor for processing batches
-        self._executor: Executor = ThreadPoolExecutor(max_workers=1)
+        # Reset state for reusability
         self._current_batch.clear()
         self._committed_path.clear()
         self._committed_geometry.clear()
         self._all_points.clear()
-        self._started = True
 
     @override
     async def stop(self) -> None:
