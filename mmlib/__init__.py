@@ -24,7 +24,10 @@ from mmlib.benchmark import (
     BenchmarkMixin,
 )
 
+from mmlib.config.config import config
+
 __all__ = [
+    "config",
     "BaseMatcher",
     "BarefootOfflineMatcher",
     "barefoot_offline_matcher",

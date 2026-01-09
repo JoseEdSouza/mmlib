@@ -9,6 +9,7 @@ def test_metrics():
 
     # Create mock graph with lengths
     graph = nx.MultiDiGraph()
+    graph.graph["crs"] = "epsg:4326"
     graph.add_edge(1, 2, osmid="1", length=100.0)
     graph.add_edge(2, 3, osmid="2", length=200.0)
     graph.add_edge(3, 4, osmid="3", length=300.0)
