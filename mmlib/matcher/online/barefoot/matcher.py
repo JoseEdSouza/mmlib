@@ -97,6 +97,9 @@ class BarefootOnlineMatcher(BaseOnlineMatcher):
         try:
             async for res in self._receiver(sending_done, sender_task):
                 yield res
+        except Exception as e:
+            logger.exception("Error in Barefoot online matching stream.")
+            raise e
         finally:
             sender_task.cancel()
             await asyncio.gather(sender_task, return_exceptions=True)
