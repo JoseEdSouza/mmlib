@@ -20,18 +20,17 @@ def test_metrics():
 
     print(f"Metrics: {metrics.to_dict()}")
 
-    # Topologic assertions
-    # Matched: ["2", "3"] (len 2)
-    # Ground Truth: ["1", "2", "3"] (len 3)
-    # Predicted: ["2", "3", "4"] (len 3)
-    # Precision: 2/3 = 0.666...
-    # Recall: 2/3 = 0.666...
-    # F1: 0.666...
-    # Accuracy (IoU): 2 / (3 + 3 - 2) = 2/4 = 0.5
+    # Topologic assertions (Length-based)
+    # Matched: ["2", "3"] -> length 200 + 300 = 500
+    # Ground Truth: ["1", "2", "3"] -> length 100 + 200 + 300 = 600
+    # Predicted: ["2", "3", "4"] -> length 200 + 300 + 50 = 550
+    # Precision: 500 / 550 = 0.9090...
+    # Recall: 500 / 600 = 0.8333...
+    # Accuracy (IoU): 500 / (600 + 550 - 500) = 500 / 650 = 0.7692...
 
-    assert abs(metrics.precision - 2 / 3) < 0.001
-    assert abs(metrics.recall - 2 / 3) < 0.001
-    assert abs(metrics.accuracy - 0.5) < 0.001
+    assert abs(metrics.precision - 500 / 550) < 0.001
+    assert abs(metrics.recall - 500 / 600) < 0.001
+    assert abs(metrics.accuracy - 500 / 650) < 0.001
 
     # Distance assertions
     # Total GT length: 100 + 200 + 300 = 600

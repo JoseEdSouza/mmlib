@@ -69,7 +69,12 @@ class MatchMetrics:
         run_id: str | None = None,
         graph: nx.Graph | nx.MultiDiGraph | None = None,
     ) -> "MatchMetrics":
-        """Calculate match metrics using the provided edges and optional graph."""
+        """
+        Calculate match metrics using the provided edges and optional graph.
+
+        If a graph is provided, metrics (Precision, Recall, Accuracy) are calculated
+        based on edge lengths. Otherwise, they fallback to simple edge counts.
+        """
         return calculate_match_metrics(
             run_id=run_id,
             ground_truth_edges=ground_truth_edges,
@@ -148,7 +153,14 @@ def calculate_match_metrics(
     run_id: str | None = None,
     graph: nx.Graph | nx.MultiDiGraph | None = None,
 ) -> MatchMetrics:
-    """Calculate matching metrics comparing ground truth and matched edges."""
+    """
+    Calculate matching metrics comparing ground truth and matched edges.
+
+    If a graph is provided, topologic metrics (Precision, Recall, Accuracy)
+    and distance-based metrics (Newson-Krumm error) are calculated based
+    on the sum of edge lengths. If no graph is provided, topologic metrics
+    fallback to simple edge counts and distance-based metrics are omitted.
+    """
     # Initial normalization
     gt_set = {str(e) for e in ground_truth_edges}
     mm_set = {str(e) for e in matched_edges}
@@ -158,20 +170,13 @@ def calculate_match_metrics(
     added = mm_set - gt_set
     missing = gt_set - mm_set
 
-    # Calculate metrics
-    precision = len(matched) / len(mm_set) if mm_set else 0.0
-    recall = len(matched) / len(gt_set) if gt_set else 0.0
-    f1 = (
-        (2 * precision * recall / (precision + recall))
-        if (precision + recall) > 0
-        else 0.0
-    )
-    accuracy = len(matched) / len(gt_set | mm_set) if (gt_set | mm_set) else 1.0
-
-    nk_error = None
+    # Variables for length-based metrics
     total_gt_len = None
+    total_mm_len = None
+    total_matched_len = None
     total_added_len = None
     total_missing_len = None
+    nk_error = None
 
     # Calculate distance-based metrics if graph is provided
     if graph is not None:
@@ -184,17 +189,38 @@ def calculate_match_metrics(
             osmid_to_len = _process_graph_logic(graph)
 
         total_gt_len = _calculate_total_length(gt_set, osmid_to_len)
+        total_mm_len = _calculate_total_length(mm_set, osmid_to_len)
+        total_matched_len = _calculate_total_length(matched, osmid_to_len)
         total_added_len = _calculate_total_length(added, osmid_to_len)
         total_missing_len = _calculate_total_length(missing, osmid_to_len)
+
+        # Length-based Topologic Metrics
+        precision = total_matched_len / total_mm_len if total_mm_len > 0 else 0.0
+        recall = total_matched_len / total_gt_len if total_gt_len > 0 else 0.0
+        accuracy = (
+            total_matched_len / (total_gt_len + total_mm_len - total_matched_len)
+            if (total_gt_len + total_mm_len - total_matched_len) > 0
+            else 1.0
+        )
 
         # Calculate Newson & Krumm error
         if total_gt_len > 0:
             nk_error = (total_added_len + total_missing_len) / total_gt_len
         else:
             nk_error = 0.0 if not mm_set else float("inf")
+    else:
+        # Fallback to count-based metrics if no graph is provided
+        precision = len(matched) / len(mm_set) if mm_set else 0.0
+        recall = len(matched) / len(gt_set) if gt_set else 0.0
+        accuracy = len(matched) / len(gt_set | mm_set) if (gt_set | mm_set) else 1.0
+
+    f1 = (
+        (2 * precision * recall / (precision + recall))
+        if (precision + recall) > 0
+        else 0.0
+    )
 
     return MatchMetrics(
-        run_id=run_id or uuid4().hex,
         precision=precision,
         recall=recall,
         f1_score=f1,
