@@ -60,7 +60,6 @@ class BarefootOnlineMatcher(BaseOnlineMatcher):
         self._last_sent_time_ms: float | None = None
         self._last_received_time_ms: int | None = None
 
-
     @override
     async def start(self) -> None:
         if not self._started:
@@ -196,6 +195,9 @@ class BarefootOnlineMatcher(BaseOnlineMatcher):
                 await self._sync.notify_sent()
                 self._last_sent_time_ms = msg["time"]
                 self._result._update_sent(pt)
+        except Exception as e:
+            logger.exception("Error in Barefoot online matcher sender.")
+            raise e
         finally:
             done.set()
 
