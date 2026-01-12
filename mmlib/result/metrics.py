@@ -221,6 +221,7 @@ def calculate_match_metrics(
     )
 
     return MatchMetrics(
+        run_id=run_id or uuid4().hex,
         precision=precision,
         recall=recall,
         f1_score=f1,
