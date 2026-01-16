@@ -210,17 +210,17 @@ The `MatchResult` object is your central hub for analysis.
 ### `plot`
 
 Basic visualization comparing raw GPS points vs. Matched points on a blank canvas.
-> ![Plot Placeholder](https://placehold.co/800x400?text=result.plot()+Placeholder)
+> ![Plot Placeholder](./docs/plot.png)
 
 ### `plot_on_graph`
 
 Visualizes the matched path directly on the NetworkX/OSMnx graph structure.
-> ![Plot On Graph Placeholder](https://placehold.co/800x400?text=result.plot_on_graph()+Placeholder)
+> ![Plot On Graph Placeholder](./docs/plot_on_graph.png)
 
 ### `plot_on_folium`
 
 Generates an interactive HTML map with the street network and the matched route.
-> ![Folium Placeholder](https://placehold.co/800x400?text=result.plot_on_folium()+Placeholder)
+> ![Folium Placeholder](./docs/plot_on_folium.png)
 
 ---
 
