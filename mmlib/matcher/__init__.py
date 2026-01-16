@@ -1,5 +1,4 @@
-from mmlib.matcher import (
-    BaseMatcher,
+from mmlib.matcher.offline import (
     BarefootOfflineMatcher,
     barefoot_offline_matcher,
     GraphHopperMatcher,
@@ -8,6 +7,8 @@ from mmlib.matcher import (
     graphium_offline_matcher,
     OSRMMatcher,
     osrm_matcher,
+)
+from mmlib.matcher.online import (
     BarefootOnlineMatcher,
     barefoot_online_matcher,
     FixedSlidingWindowMatcher,
@@ -17,18 +18,9 @@ from mmlib.matcher import (
     BatchesOnlineMatcher,
     batches_matcher,
 )
-from mmlib.benchmark import (
-    BenchMetrics,
-    PartialOnlineBenchMetrics,
-    OnlineBenchMetrics,
-    BenchmarkMixin,
-)
-
-from mmlib.config.config import config
+from mmlib.matcher.base import BaseMatcher
 
 __all__ = [
-    "config",
-    "BaseMatcher",
     "BarefootOfflineMatcher",
     "barefoot_offline_matcher",
     "GraphHopperMatcher",
@@ -43,10 +35,7 @@ __all__ = [
     "fsw_matcher",
     "GraphiumOnlineMatcher",
     "graphium_online_matcher",
+    "BaseMatcher",
     "BatchesOnlineMatcher",
     "batches_matcher",
-    "BenchMetrics",
-    "PartialOnlineBenchMetrics",
-    "OnlineBenchMetrics",
-    "BenchmarkMixin",
 ]

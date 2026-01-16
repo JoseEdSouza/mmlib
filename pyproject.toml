@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "mmlib"
 version = "0.1.0"
@@ -5,8 +9,39 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "gpx>=0.2.1",
+    "folium>=0.20.0",
+    "geopy>=2.4.1",
+    "gpx>=2025.1.0",
     "networkx>=3.6",
+    "numpy>=2.3.5",
+    "osmnx>=2.0.7",
+    "pandas>=2.3.3",
     "plotly>=6.5.0",
+    "polyline>=2.0.3",
+    "pyzmq>=27.1.0",
     "requests>=2.32.5",
+    "scipy>=1.16.3",
+    "shapely>=2.1.2",
+    "psutil>=6.1.1",
 ]
+
+[dependency-groups]
+dev = [
+    "black>=25.11.0",
+    "pyright>=1.1.407",
+    "ruff>=0.14.6",
+]
+test = [
+    "pytest>=8.3.4",
+    "pytest-asyncio>=0.25.1",
+]
+
+[tool.hatch.build]
+exclude = [
+  "/tests",
+  "/*.md",
+  "!/README.md",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["mmlib"]
