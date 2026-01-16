@@ -1,5 +1,5 @@
 import json
-from typing import Any
+from typing import Any, Final, override
 
 import polyline
 import requests
@@ -12,10 +12,14 @@ from mmlib.utils import factory
 
 
 class GraphHopperMatcher(BaseMatcher):
-    _base_url: str
-    _gps_accuracy: int
-    _profile: str
-    _locale: str
+    """Offline matcher using GraphHopper Map Matching API."""
+
+    _matcher_name: Final[str] = "graphhopper"
+
+    @property
+    @override
+    def matcher_name(self) -> str:
+        return self._matcher_name
 
     def __init__(
         self,
@@ -29,13 +33,14 @@ class GraphHopperMatcher(BaseMatcher):
         self._profile = profile
         self._locale = locale
 
+    @override
     def match(self, points: list[GPSPoint]) -> MatchResult:
         gpx_points = to_gpx(points)
         response = self._request(gpx_points)
         res_points = polyline.decode(response["points"])
         edge_ids = [str(edge) for (_, __, edge) in response["edge_ids"]]
         return MatchResult(
-            matcher_name="GraphHopper",
+            matcher_name=self.matcher_name,
             measurement_points=[GPSPoint(lat, lon, time) for lat, lon, time in points],
             matched_points=[Coordinate(lat, lon) for lat, lon in res_points],
             edge_ids=edge_ids,
@@ -62,11 +67,20 @@ class GraphHopperMatcher(BaseMatcher):
 
         req.raise_for_status()
 
-        res = json.loads(req.content)["paths"][0]
+        res = json.loads(req.content)
+        paths = res.get("paths")
+        if not paths or len(paths) == 0:
+            raise RuntimeError("No paths returned from GraphHopper matcher.")
+
+        path = paths[0]
+        points = path.get("points", [])
+
+        details = path.get("details", {})
+        edge_ids = details.get("osm_way_id", [])
 
         return {
-            "points": res["points"],
-            "edge_ids": res["details"]["osm_way_id"],
+            "points": points,
+            "edge_ids": edge_ids,
         }
 
 

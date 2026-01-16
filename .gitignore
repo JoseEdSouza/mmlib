@@ -15,14 +15,10 @@ __pycache__/
 # cache
 .cache/
 cache
+.pytest_cache
 
 # Virtual environments
 .venv
-
-# data dirs
-*/data/*
-data
-output
 
 #volumes
 */volumes/*

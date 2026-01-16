@@ -1,315 +1,280 @@
 import asyncio
-import json
+import copy
 import logging
-import uuid
-from typing import AsyncIterable, AsyncIterator, Final, override, Self
+from collections.abc import AsyncIterable, AsyncIterator
+from typing import Final, override
 
-import networkx as nx
-import osmnx as ox
-import zmq
-import zmq.asyncio as azmq
 from shapely import wkt
 
 from mmlib.matcher.base import BaseOnlineMatcher
+from mmlib.matcher.online.barefoot._communicator import _BarefootCommunicator
+from mmlib.matcher.online.barefoot._synchronizer import _Synchronizer
+from mmlib.matcher.online.barefoot._types import _PointMessage, _StateMessage
 from mmlib.result import OnlineMatchResult
-from mmlib.types import GPSPoint, Coordinate
+from mmlib.types import Coordinate, GPSPoint
 from mmlib.utils import factory
-from ._types import _StateMessage
-from mmlib.exceptions import (
-    MatcherConnectionError,
-    MatcherTimeoutError,
-    MatcherProtocolError,
-)
 
 logger = logging.getLogger(__name__)
 
 
-class BarefootMatcher(BaseOnlineMatcher):
-    """
-    Online map-matcher that communicates with Barefoot over TCP
-    and receives matched states through a ZMQ PUB/SUB broker.
+class BarefootOnlineMatcher(BaseOnlineMatcher):
+    """Online matcher using Barefoot (TCP publish + ZMQ subscribe).
+
+    Notes:
+    - Strict 1:1 send/receive (max_inflight=1).
+    - After input ends, we drain until all sent are received, or `drain_timeout` silence.
+    - Defensive correlation via (id, time) to avoid mixing vehicles/out-of-order/duplicates.
     """
 
-    _matcher_name: Final[str] = "barefoot"
+    _matcher_name: Final[str] = "barefoot_online"
+
+    @property
+    @override
+    def matcher_name(self) -> str:
+        return self._matcher_name
 
     def __init__(
         self,
-        G_road: nx.MultiDiGraph,
-        host: str = "localhost",
-        port: int = 1234,
-        broker_url: str = "tcp://localhost:5556",
+        pub_host: str = "localhost",
+        pub_port: int = 1234,
+        sub_host: str = "localhost",
+        sub_port: int | str = 5556,
+        *,
         vehicle_id: str | None = None,
-        timeout: float = 5.0,
-    ):
-        # Connectivity
-        self._host = host
-        self._port = port
-        self._broker_url = broker_url
-        self._vehicle_id = vehicle_id or uuid.uuid4().hex
-        self._timeout = timeout
+        drain_timeout: float = 5.0,
+    ) -> None:
+        super().__init__()
+        if vehicle_id is None:
+            import uuid
 
-        # Graph
-        self._G_road = G_road
+            vehicle_id = str(uuid.uuid4())
 
-        # ZMQ resources
-        self._ctx: azmq.Context | None = None
-        self._socket: azmq.Socket | None = None
+        self._vehicle_id = vehicle_id
+        self._drain_timeout = drain_timeout
+        self._comm = _BarefootCommunicator(pub_host, pub_port, sub_host, sub_port)
 
-        # State tracking
         self._result = OnlineMatchResult(matcher_name=self._matcher_name)
-        self._pending: dict[int, GPSPoint] = {}
-        self._pending_lock = asyncio.Lock()
-        self._send_queue: asyncio.Queue[None] = asyncio.Queue()
+        self._sync = _Synchronizer(max_inflight=1)
 
-    # -------------------------------------------------------------------------
-    # Context manager
-    # -------------------------------------------------------------------------
+        # Correlation guards
+        self._last_sent_time_ms: float | None = None
+        self._last_received_time_ms: int | None = None
 
     @override
-    async def __aenter__(self) -> Self:
-        if self._ctx is not None:
-            return self
+    async def start(self) -> None:
+        if not self._started:
+            await self._comm.__aenter__()
+            self._started = True
 
-        try:
-            self._ctx = azmq.Context()
-            self._socket = self._create_subscriber_socket(self._ctx, self._broker_url)
-            logger.info("Connected to ZMQ broker at %s", self._broker_url)
-        except Exception as e:
-            raise MatcherConnectionError(
-                f"Failed to connect to ZMQ broker at {self._broker_url}"
-            ) from e
-
-        return self
+        # Reset state for reusability
+        self._result = OnlineMatchResult(matcher_name=self._matcher_name)
+        self._sync = _Synchronizer(max_inflight=1)
+        self._last_sent_time_ms = None
+        self._last_received_time_ms = None
 
     @override
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self._cleanup()
+    async def stop(self) -> None:
+        if self._started:
+            await self._comm.__aexit__(None, None, None)
+            self._started = False
 
-    # -------------------------------------------------------------------------
-    # Public API
-    # -------------------------------------------------------------------------
+        # Clear state
+        self._last_sent_time_ms = None
+        self._last_received_time_ms = None
+
     @override
     async def match_stream(
         self, points: AsyncIterable[GPSPoint]
     ) -> AsyncIterator[OnlineMatchResult]:
-        socket = self._ensure_socket_ready()
+        await self.start()
+        sending_done = asyncio.Event()
 
-        writer_task = asyncio.create_task(self._writer_loop(points))
-
-        try:
-            while True:
-                # Wait for next expected point (or end of stream)
-                if not self._send_queue.empty():
-                    token = await self._send_queue.get()
-                    if token is None:
-                        break
-
-                try:
-                    raw = await asyncio.wait_for(socket.recv(), timeout=self._timeout)
-
-                    data: _StateMessage = self._parse_state_message(raw)
-
-                    coordinate = self._extract_coordinate(data)
-                    if not coordinate:
-                        logger.warning("Received empty matched point from Barefoot")
-                        continue
-
-                    # Attempt to correlate the matched state with original GPS
-                    time_key = data.get("time")
-                    async with self._pending_lock:
-                        pt = self._pending.pop(time_key, None)
-
-                    edge_id = self._snap_matched_point_to_edge(coordinate)
-
-                    self._result._update(
-                        new_point=pt,
-                        matched_point=coordinate,
-                        edge_id=edge_id,
-                    )
-
-                    yield self._result
-
-                except asyncio.TimeoutError as exc:
-                    logger.error("Timeout waiting for ZMQ message")
-                    raise MatcherTimeoutError(
-                        "Timeout waiting for ZMQ message"
-                    ) from exc
-
-        finally:
-            # ensure writer is stopped
-            writer_task.cancel()
-            try:
-                await writer_task
-            except asyncio.CancelledError:
-                pass
-
-            # release all resources
-            await self._cleanup()
-
-    # -------------------------------------------------------------------------
-    # ZMQ helpers
-    # -------------------------------------------------------------------------
-
-    @staticmethod
-    def _create_subscriber_socket(ctx: azmq.Context, broker_url: str) -> azmq.Socket:
-        socket = ctx.socket(zmq.SUB)
-        socket.connect(broker_url)
-        socket.setsockopt(zmq.SUBSCRIBE, b"")
-        return socket
-
-    def _ensure_socket_ready(self) -> azmq.Socket:
-        if self._socket is None:
-            raise RuntimeError(
-                "Matcher used outside of async context. Use 'async with matcher:'"
-            )
-        return self._socket
-
-    @staticmethod
-    def _parse_state_message(raw: bytes) -> _StateMessage:
-        return json.loads(raw.decode())
-
-    @staticmethod
-    def _extract_coordinate(data: _StateMessage) -> Coordinate | None:
-        if not data or "point" not in data:
-            return None
-        x, y = wkt.loads(data["point"]).coords[0]
-        return Coordinate(lon=x, lat=y)
-
-    # -------------------------------------------------------------------------
-    # TCP writer
-    # -------------------------------------------------------------------------
-
-    async def _writer_loop(self, points: AsyncIterable[GPSPoint]):
-        try:
-            async for pt in points:
-                timestamp_ms = int(pt.time.timestamp() * 1000)
-
-                # Register BEFORE sending to avoid race condition
-                async with self._pending_lock:
-                    self._pending[timestamp_ms] = pt
-
-                try:
-                    reader, writer = await self._open_tcp_connection()
-                except MatcherConnectionError:
-                    # Remove pending entry because nothing was sent
-                    async with self._pending_lock:
-                        self._pending.pop(timestamp_ms, None)
-                    continue
-
-                try:
-                    await self._send_point_and_wait_ack(
-                        pt, timestamp_ms, reader, writer
-                    )
-                except Exception:
-                    # Remove pending entry on failure
-                    async with self._pending_lock:
-                        self._pending.pop(timestamp_ms, None)
-                    raise
-
-                finally:
-                    writer.close()
-                    await writer.wait_closed()
-
-        except asyncio.CancelledError:
-            logger.debug("Writer loop cancelled.")
-            raise
-
-        except Exception:
-            logger.exception("Critical error in writer loop")
-            raise
-        finally:
-            # Signal end of stream
-            await self._send_queue.put(None)
-
-    async def _open_tcp_connection(self):
-        try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(self._host, self._port),
-                timeout=self._timeout,
-            )
-            return reader, writer
-        except asyncio.TimeoutError as exc:
-            msg = f"Timeout connecting to Barefoot TCP at {self._host}:{self._port}"
-            logger.error(msg)
-            raise MatcherConnectionError(msg) from exc
-        except OSError as exc:
-            msg = (
-                f"Failed to connect to Barefoot TCP at {self._host}:{self._port}: {exc}"
-            )
-            logger.error(msg)
-            raise MatcherConnectionError(msg) from exc
-
-    async def _send_point_and_wait_ack(
-        self,
-        pt: GPSPoint,
-        timestamp_ms: int,
-        reader: asyncio.StreamReader,
-        writer: asyncio.StreamWriter,
-    ) -> None:
-        msg = json.dumps(
-            {
-                "id": self._vehicle_id,
-                "time": timestamp_ms,
-                "point": f"POINT({pt.coordinate.lon} {pt.coordinate.lat})",
-            }
+        sender_task = asyncio.create_task(
+            self._sender(points, sending_done), name="barefoot_sender"
         )
 
-        writer.write(msg.encode() + b"\n")
-        if writer.can_write_eof():
-            writer.write_eof()
-
-        await writer.drain()
-
         try:
-            response = await asyncio.wait_for(reader.read(), timeout=self._timeout)
-        except asyncio.TimeoutError as exc:
-            raise MatcherTimeoutError("Timeout waiting for Barefoot response") from exc
+            async for res in self._receiver(sending_done, sender_task):
+                yield res
+        except Exception as e:
+            logger.exception("Error in Barefoot online matching stream.")
+            raise e
+        finally:
+            sender_task.cancel()
+            await asyncio.gather(sender_task, return_exceptions=True)
 
-        logger.debug("Barefoot response: %s", response)
+    # ------------------------ helpers (sender) ------------------------
 
-        if b"SUCCESS" not in response:
-            raise MatcherProtocolError(
-                f"Barefoot matching failed for point {pt}: {response.decode()}"
+    def _make_point_message(self, pt: GPSPoint) -> _PointMessage:
+        return {
+            "id": self._vehicle_id,
+            "time": pt.time.timestamp() * 1000,
+            "point": f"POINT({pt.coordinate.lon} {pt.coordinate.lat})",
+        }
+
+    async def _submit_point_with_timeout(
+        self, msg: _PointMessage, timeout_s: float
+    ) -> bool:
+        try:
+            await asyncio.wait_for(self._comm.submit_point(msg), timeout=timeout_s)
+            return True
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Timeout sending point to Barefoot; dropping and continuing."
             )
+            return False
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "Unexpected error sending point to Barefoot; dropping and continuing."
+            )
+            return False
 
-    # -------------------------------------------------------------------------
-    # Edge snapping
-    # -------------------------------------------------------------------------
+    # ------------------------ helpers (receiver) ------------------------
 
-    def _snap_matched_point_to_edge(self, point: Coordinate) -> str:
-        u, v, k = ox.nearest_edges(self._G_road, point.lon, point.lat)
-        return self._G_road.edges[u, v, k]["osmid"]
+    def _should_accept_state(self, state: _StateMessage) -> bool:
+        # Vehicle filter
+        if state.get("id") != self._vehicle_id:
+            return False
 
-    # -------------------------------------------------------------------------
-    # Cleanup
-    # -------------------------------------------------------------------------
+        st_time = state.get("time")
+        if st_time is None:
+            return False
 
-    async def _cleanup(self):
-        """Release all matcher resources safely."""
+        # Drop duplicates / out-of-order states
+        if (
+            self._last_received_time_ms is not None
+            and st_time <= self._last_received_time_ms
+        ):
+            return False
 
-        # Clear all pending entries
-        async with self._pending_lock:
-            self._pending.clear()
+        # Safety: ignore states that go "backwards" relative to last successfully sent
+        if self._last_sent_time_ms is not None and st_time < self._last_sent_time_ms:
+            return False
 
-        # Close ZMQ socket
-        if self._socket:
+        # Must have a parseable point
+        if self._state_to_coordinate(state) is None:
+            return False
+
+        return True
+
+    def _update_result_from_state(self, state: _StateMessage) -> None:
+        coord = self._state_to_coordinate(state)
+        if coord is None:
+            return
+        self._result._update_matched(
+            matched_point=coord,
+            edge_id=None,
+        )
+        if (path := state.get("path_osm_ids")) is not None and len(path) > 0:
+            self._result.edge_ids = [str(osm_id) for osm_id in path]
+
+    def _snapshot_result(self) -> OnlineMatchResult:
+        # Snapshot to avoid yielding the same mutable object repeatedly
+        try:
+            return copy.deepcopy(self._result)
+        except Exception as e:
+            logger.warning("Error deepcopying result: %s. Returning mutable result.", e)
+            return self._result
+
+    # ------------------------ pipeline ------------------------
+
+    async def _sender(
+        self, points: AsyncIterable[GPSPoint], done: asyncio.Event
+    ) -> None:
+        try:
+            async for pt in points:
+                await self._sync.wait_to_send()
+
+                msg = self._make_point_message(pt)
+                ok = await self._submit_point_with_timeout(msg, timeout_s=3.0)
+                if not ok:
+                    continue
+
+                await self._sync.notify_sent()
+                self._last_sent_time_ms = msg["time"]
+                self._result._update_sent(pt)
+        except Exception as e:
+            logger.exception("Error in Barefoot online matcher sender.")
+            raise e
+        finally:
+            done.set()
+
+    async def _receiver(
+        self,
+        sending_done: asyncio.Event,
+        sender_task: asyncio.Task[None],
+    ) -> AsyncIterator[OnlineMatchResult]:
+        state_iter = aiter(self._comm.messages())
+
+        while True:
+            if await self._sync.is_finished(
+                sending_done.is_set() or sender_task.done()
+            ):
+                return
+
             try:
-                self._socket.close(linger=0)
+                state = await asyncio.wait_for(
+                    anext(state_iter),
+                    timeout=self._drain_timeout,
+                )
+            except asyncio.TimeoutError:
+                if await self._sync.is_finished(
+                    sending_done.is_set() or sender_task.done()
+                ):
+                    logger.debug(
+                        "Timeout waiting for barefoot states (sent: %d, received: %d). Closing.",
+                        self._sync.sent_count,
+                        self._sync.received_count,
+                    )
+                    return
+                continue
+            except StopAsyncIteration:
+                return
+            except asyncio.CancelledError:
+                return
             except Exception:
-                pass
-            self._socket = None
+                logger.exception(
+                    "Unexpected error receiving state from Barefoot; continuing."
+                )
+                continue
 
-        # Terminate context
-        if self._ctx:
+            # Validate/correlate BEFORE releasing sender
             try:
-                self._ctx.term()
+                if not self._should_accept_state(state):
+                    continue
             except Exception:
-                pass
-            self._ctx = None
+                logger.exception("Error validating Barefoot state; ignoring.")
+                continue
 
-        logger.info("Barefoot matcher cleanup completed.")
+            self._last_received_time_ms = int(state["time"])
+            await self._sync.notify_received()
+
+            self._update_result_from_state(state)
+            yield self._snapshot_result()
+
+    # ------------------------ WKT helpers ------------------------
+
+    @staticmethod
+    def _state_to_coordinate(data: _StateMessage) -> Coordinate | None:
+        pt_wkt = data.get("point")
+        if not pt_wkt:
+            return None
+        try:
+            geom = wkt.loads(pt_wkt)
+            x, y = geom.coords[0]
+            return Coordinate(lon=x, lat=y)
+        except Exception:
+            logger.warning("Invalid WKT point from Barefoot: %r", pt_wkt)
+            return None
+
+    @staticmethod
+    def _state_to_edge_id(data: _StateMessage) -> str | None:
+        edge_gid = data.get("osm_id")
+        return str(edge_gid) if edge_gid is not None else None
 
 
-@factory(BarefootMatcher)
-def barefoot_matcher(*args, **kwargs):
-    return BarefootMatcher(*args, **kwargs)
+@factory(BarefootOnlineMatcher)
+def barefoot_online_matcher(*args, **kwargs) -> BaseOnlineMatcher:
+    return BarefootOnlineMatcher(*args, **kwargs)

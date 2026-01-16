@@ -1,146 +1,20 @@
 import math
-from typing import Any, Literal
-
 import networkx as nx
 import osmnx as ox
-import pandas as pd
 import plotly.graph_objects as go
+from mmlib.result import calculate_match_metrics
 
 # --- Types ---
 type Lat = float
 type Lon = float
 type Point = tuple[Lat, Lon]
 type EdgeID = str
-type TraceType = Literal["markers", "lines"]
 
 
-# --- Helper Functions ---
+# --- Private Helper Functions ---
 def _distance(a: Point, b: Point) -> float:
     """Calculate Euclidean distance between two points."""
     return math.hypot(a[0] - b[0], a[1] - b[1])
-
-
-def _create_scatter_trace(
-    df: pd.DataFrame,
-    trace_type: str,
-    mode: TraceType,
-    color: str | None = None,
-    size: int | None = None,
-    width: int | None = None,
-    visible: bool = True,
-) -> go.Scattermap:
-    """Create a Scattermap trace for points or lines."""
-    marker_dict = dict(size=size) if size else None
-    line_dict = dict(width=width) if width else None
-
-    return go.Scattermap(
-        lat=df["lat"],
-        lon=df["lon"],
-        mode=mode,
-        marker=marker_dict,
-        line=line_dict,
-        name=f"{trace_type} - {'pontos' if mode == 'markers' else 'linha'}",
-        legendgroup=trace_type,
-        visible=visible,
-    )
-
-
-def _create_layout(
-    title: str,
-    map_center: dict[str, float],
-    zoom: float,
-    updatemenus: list[dict[str, Any]] | None = None,
-    height: int = 700,
-) -> go.Layout:
-    """Create the layout for the figure."""
-    return go.Layout(
-        mapbox_style="open-street-map",
-        mapbox=dict(center=map_center, zoom=zoom),
-        margin=dict(l=0, r=0, t=80, b=0),
-        height=height,
-        title=title,
-        updatemenus=updatemenus,
-    )
-
-
-def _create_buttons(
-    original_label: str,
-    calculated_label: str,
-    show_original_line: bool,
-    map_center: dict[str, float],
-    zoom: float,
-) -> list[dict[str, Any]]:
-    """Create the update buttons for the map."""
-    return [
-        dict(
-            type="buttons",
-            direction="right",
-            showactive=True,
-            x=0.5,
-            xanchor="center",
-            y=1,
-            yanchor="top",
-            buttons=[
-                dict(
-                    label="Mostrar Nenhuma",
-                    method="update",
-                    args=[
-                        {"visible": [False, False, False, False]},
-                        {"mapbox": dict(center=map_center, zoom=zoom)},
-                    ],
-                ),
-                dict(
-                    label="Mostrar Ambas",
-                    method="update",
-                    args=[
-                        {"visible": [True, show_original_line, True, True]},
-                        {"mapbox": dict(center=map_center, zoom=zoom)},
-                    ],
-                ),
-                dict(
-                    label=f"Apenas {original_label}",
-                    method="update",
-                    args=[
-                        {"visible": [True, show_original_line, False, False]},
-                        {"mapbox": dict(center=map_center, zoom=zoom)},
-                    ],
-                ),
-                dict(
-                    label=f"Apenas {calculated_label}",
-                    method="update",
-                    args=[
-                        {"visible": [False, False, True, True]},
-                        {"mapbox": dict(center=map_center, zoom=zoom)},
-                    ],
-                ),
-            ],
-        )
-    ]
-
-
-def _map_osmid_to_edges(
-    graph: nx.Graph | nx.MultiDiGraph,
-) -> dict[str, list[tuple[int, int]]]:
-    """Map OSM IDs to graph edges."""
-    osmid_to_edge_map: dict[str, list[tuple[int, int]]] = {}
-    for u, v, data in graph.edges(data=True):
-        osmids = data.get("osmid")
-        if osmids is None:
-            continue
-
-        if not isinstance(osmids, (list, tuple, set)):
-            osmids = [osmids]
-
-        for osm in osmids:
-            osmid_str = str(osm)
-            osmid_to_edge_map.setdefault(osmid_str, []).append((u, v))
-
-        osmid_to_edge_map.setdefault(str(u), []).append((u, v))
-
-    for node in graph.nodes():
-        osmid_to_edge_map.setdefault(str(node), []).append((node, node))
-
-    return osmid_to_edge_map
 
 
 def _create_path_trace(
@@ -204,80 +78,38 @@ def _create_path_trace(
     )
 
 
-# --- Main Functions ---
-def plot_trajectories(
-    original: list[Point],
-    calculated: list[Point],
-    title: str = "Tracks",
-    original_label: str = "Original",
-    calculated_label: str = "Calculated",
-    show_original_line: bool = True,
-    show_buttons: bool = True,
-    center_lat: float | None = None,
-    center_lon: float | None = None,
-    zoom: float = 14,
-) -> None:
-    """Plot original and calculated trajectories on a map."""
-    flat_original = [
-        (lat, lon, original_label, i) for i, (lat, lon) in enumerate(original)
-    ]
-    flat_calculated = [
-        (lat, lon, calculated_label, i) for i, (lat, lon) in enumerate(calculated)
-    ]
+def _map_osmid_to_edges(
+    graph: nx.Graph | nx.MultiDiGraph,
+) -> dict[str, list[tuple[int, int]]]:
+    """Map OSM IDs to graph edges."""
+    osmid_to_edge_map: dict[str, list[tuple[int, int]]] = {}
+    for u, v, data in graph.edges(data=True):
+        osmids = data.get("osmid")
+        if osmids is None:
+            continue
 
-    df = pd.DataFrame(
-        flat_original + flat_calculated,
-        columns=["lat", "lon", "type", "row_num"],  # type: ignore
-    )
+        if not isinstance(osmids, (list, tuple, set)):
+            osmids = [osmids]
 
-    fig = go.Figure()
+        for osm in osmids:
+            osmid_str = str(osm)
+            osmid_to_edge_map.setdefault(osmid_str, []).append((u, v))
 
-    for type_ in [original_label, calculated_label]:
-        subset = df[df["type"] == type_].sort_values(by=["row_num"])  # type: ignore
+        osmid_to_edge_map.setdefault(str(u), []).append((u, v))
 
-        # Points
-        fig.add_trace(
-            _create_scatter_trace(subset, type_, "markers", size=10, visible=True)
-        )
+    for node in graph.nodes():
+        osmid_to_edge_map.setdefault(str(node), []).append((node, node))
 
-        # Lines
-        show_line = True
-        if type_ == original_label and not show_original_line:
-            show_line = False
-
-        fig.add_trace(
-            _create_scatter_trace(subset, type_, "lines", width=2, visible=show_line)
-        )
-
-    # Define map center
-    if center_lat is None or center_lon is None:
-        map_center = dict(lat=float(df["lat"].mean()), lon=float(df["lon"].mean()))
-    else:
-        map_center = dict(lat=center_lat, lon=center_lon)
-
-    updatemenus = None
-    if show_buttons:
-        updatemenus = _create_buttons(
-            original_label, calculated_label, show_original_line, map_center, zoom
-        )
-
-    fig.update_layout(_create_layout(title, map_center, zoom, updatemenus))
-
-    fig.show()
+    return osmid_to_edge_map
 
 
-def plot_map_matching_from_osmid(
+def _plot_on_graph(
     graph: nx.Graph | nx.MultiDiGraph | str,
     ground_truth_osmid_path: list[EdgeID],
     map_matched_osmid_path: list[EdgeID],
 ) -> None:
     """
     Plot ground truth and map matched paths on an OSMnx graph from lists of osmids.
-
-    Args:
-        graph: NetworkX graph or place name (str) to load from OSMnx.
-        ground_truth_osmid_path: List of OSM IDs for ground truth path.
-        map_matched_osmid_path: List of OSM IDs for matched path.
     """
     if isinstance(graph, str):
         print(f"Loading graph for place: {graph}...")
@@ -414,29 +246,38 @@ def plot_map_matching_from_osmid(
         ],
     )
 
-    gt_edges = set(ground_truth_osmid_path)
-    mm_edges = set(map_matched_osmid_path)
+    metrics = calculate_match_metrics(
+        ground_truth_edges=ground_truth_osmid_path,
+        matched_edges=map_matched_osmid_path,
+        graph=graph,
+    )
 
-    matched = gt_edges & mm_edges
-    added = mm_edges - gt_edges
-    missing = gt_edges - mm_edges
-    difference = gt_edges ^ mm_edges
+    nk_str = (
+        f" | NK Error: {metrics.newson_krumm_error:.4f}"
+        if metrics.newson_krumm_error is not None
+        else ""
+    )
 
     fig.update_layout(
-        margin=dict(l=10, r=10, t=40, b=60),  # more space below
+        margin=dict(l=10, r=10, t=40, b=80),  # more space below
         annotations=[
             dict(
                 text=(
-                    f"Matched: {len(matched)} | "
-                    f"Added: {len(added)} | "
-                    f"Missing: {len(missing)} | "
-                    f"Difference: {len(difference)}"
+                    f"Matched: {metrics.matched_count} | "
+                    f"Added: {metrics.added_count} | "
+                    f"Missing: {metrics.missing_count}<br>"
+                    f"Error Rate: {metrics.error_rate:.4f} | "
+                    f"F1: {metrics.f1_score:.4f} | "
+                    f"Acc: {metrics.accuracy:.4f} | "
+                    f"Prec: {metrics.precision:.4f} | "
+                    f"Rec: {metrics.recall:.4f}"
+                    f"{nk_str}"
                 ),
                 showarrow=False,
                 xref="paper",
                 yref="paper",
                 x=0.5,
-                y=-0.1,
+                y=-0.15,
                 xanchor="center",
                 font=dict(size=12),
             )

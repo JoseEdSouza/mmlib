@@ -1,5 +1,41 @@
-from .online.barefoot.matcher import BarefootMatcher, barefoot_matcher
-from .base import BaseMatcher
-from .offline.graphhopper.matcher import graphhopper_matcher
+from mmlib.matcher.offline import (
+    BarefootOfflineMatcher,
+    barefoot_offline_matcher,
+    GraphHopperMatcher,
+    graphhopper_matcher,
+    GraphiumOfflineMatcher,
+    graphium_offline_matcher,
+    OSRMMatcher,
+    osrm_matcher,
+)
+from mmlib.matcher.online import (
+    BarefootOnlineMatcher,
+    barefoot_online_matcher,
+    FixedSlidingWindowMatcher,
+    fsw_matcher,
+    GraphiumOnlineMatcher,
+    graphium_online_matcher,
+    BatchesOnlineMatcher,
+    batches_matcher,
+)
+from mmlib.matcher.base import BaseMatcher
 
-__all__ = ["BarefootMatcher", "BaseMatcher", "graphhopper_matcher", "barefoot_matcher"]
+__all__ = [
+    "BarefootOfflineMatcher",
+    "barefoot_offline_matcher",
+    "GraphHopperMatcher",
+    "graphhopper_matcher",
+    "GraphiumOfflineMatcher",
+    "graphium_offline_matcher",
+    "OSRMMatcher",
+    "osrm_matcher",
+    "BarefootOnlineMatcher",
+    "barefoot_online_matcher",
+    "FixedSlidingWindowMatcher",
+    "fsw_matcher",
+    "GraphiumOnlineMatcher",
+    "graphium_online_matcher",
+    "BaseMatcher",
+    "BatchesOnlineMatcher",
+    "batches_matcher",
+]

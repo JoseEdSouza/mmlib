@@ -1,9 +1,52 @@
-from mmlib.matcher.base import BaseMatcher
-from mmlib.matcher.offline.graphhopper.matcher import graphhopper_matcher
-from mmlib.utils.gpx import to_gpx
+from mmlib.matcher import (
+    BaseMatcher,
+    BarefootOfflineMatcher,
+    barefoot_offline_matcher,
+    GraphHopperMatcher,
+    graphhopper_matcher,
+    GraphiumOfflineMatcher,
+    graphium_offline_matcher,
+    OSRMMatcher,
+    osrm_matcher,
+    BarefootOnlineMatcher,
+    barefoot_online_matcher,
+    FixedSlidingWindowMatcher,
+    fsw_matcher,
+    GraphiumOnlineMatcher,
+    graphium_online_matcher,
+    BatchesOnlineMatcher,
+    batches_matcher,
+)
+from mmlib.benchmark import (
+    BenchMetrics,
+    PartialOnlineBenchMetrics,
+    OnlineBenchMetrics,
+    BenchmarkMixin,
+)
+
+from mmlib.config.config import config
 
 __all__ = [
+    "config",
     "BaseMatcher",
+    "BarefootOfflineMatcher",
+    "barefoot_offline_matcher",
+    "GraphHopperMatcher",
     "graphhopper_matcher",
-    "to_gpx",
+    "GraphiumOfflineMatcher",
+    "graphium_offline_matcher",
+    "OSRMMatcher",
+    "osrm_matcher",
+    "BarefootOnlineMatcher",
+    "barefoot_online_matcher",
+    "FixedSlidingWindowMatcher",
+    "fsw_matcher",
+    "GraphiumOnlineMatcher",
+    "graphium_online_matcher",
+    "BatchesOnlineMatcher",
+    "batches_matcher",
+    "BenchMetrics",
+    "PartialOnlineBenchMetrics",
+    "OnlineBenchMetrics",
+    "BenchmarkMixin",
 ]
